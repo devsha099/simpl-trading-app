@@ -1,0 +1,24 @@
+{
+  "name": "simpl-trading-backend",
+  "version": "0.1.0",
+  "description": "Backend for Simpl Trading — proxies Alpaca Broker API and holds all secrets.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}
