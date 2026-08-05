@@ -89,6 +89,14 @@ On every launch, the root layout decides where the user goes, in this order:
 This makes the app resilient: someone who quits mid-KYC resumes at onboarding next time,
 because routing reads their real state instead of assuming a linear path.
 
+**Implemented 2026-08-04** in `src/app/_layout.tsx` + `src/hooks/useAuthState.ts`: a
+`useSegments()`-based guard that redirects on every auth-state change. Verified via a
+real Playwright run that directly navigating to `/watchlists`, `/account`, or
+`/onboarding` while signed out always bounces to `/welcome` — you cannot reach a
+protected screen by URL alone. Onboarding-complete and pending-becomes-active are NOT
+Supabase auth events, so `(auth)/onboarding.tsx` and `(auth)/pending.tsx` navigate
+directly after their own actions instead of relying on this listener.
+
 ---
 
 ## 5. App layout (v1)
@@ -151,15 +159,19 @@ because routing reads their real state instead of assuming a linear path.
 - Node.js 20+, TypeScript, Fastify.
 - Module system: **NodeNext / ESM** (`"type": "module"`).
 - Alpaca client: native `fetch` + **HTTP Basic auth** (key ID + secret, base64).
-- Planned additions: `@supabase/supabase-js` (verify tokens, query DB), `zod` (validate
-  every request body), `@fastify/cors`, `@fastify/rate-limit`.
+- Installed: `@supabase/supabase-js` (verify session tokens, query DB — admin/service-role
+  client, see `supabase.ts`), `zod` (validates `/api/me/onboard`'s body), `@fastify/cors`.
+- Still planned: `@fastify/rate-limit`.
 
 **Mobile app** (`simpl-trading-app/`)
 - React Native via **Expo**, TypeScript, **expo-router** (file-based routing).
 - Screens live under **`src/app/`** (this project uses the `src/app` root, not `app/`).
-- Planned additions: `@supabase/supabase-js`, `@react-native-async-storage/async-storage`,
-  `react-native-url-polyfill`, `expo-secure-store`, `react-hook-form` + `zod` +
-  `@hookform/resolvers`, `@tanstack/react-query`, `nativewind`.
+- Installed: `@supabase/supabase-js`, `@react-native-async-storage/async-storage`,
+  `react-native-url-polyfill`, `expo-secure-store` (added to the config plugins list but
+  not yet wired into the Supabase auth storage adapter — session storage currently uses
+  AsyncStorage; see §11's gotcha on why), `react-hook-form` + `zod` + `@hookform/resolvers`.
+- Still planned: `@tanstack/react-query` (for real Supabase-backed watchlists —
+  see next steps), `nativewind`.
 - Later: `react-native-purchases` (RevenueCat), Plaid.
 
 **Data / services**
@@ -179,26 +191,40 @@ workspace/
 │   │   ├── config.ts             env loading/validation
 │   │   ├── alpaca.ts             Alpaca Broker API client (Basic auth)
 │   │   ├── alpaca-data.ts        Alpaca Market Data client (APCA-API-KEY headers, different host)
-│   │   ├── supabase.ts           admin Supabase client (verify tokens, query DB)
-│   │   ├── auth.ts               preHandler: verify session token, attach user
+│   │   ├── supabase.ts           admin Supabase client (service-role key, bypasses RLS);
+│   │   │                         lazily validated so the server still boots without it
+│   │   ├── auth.ts               preHandler: verify session token, attach req.user
 │   │   ├── db/
-│   │   │   └── accounts.ts       look up a user's alpaca_account_id + status
+│   │   │   └── accounts.ts       look up / save a user's alpaca_account_id + status
 │   │   ├── schemas/
-│   │   │   ├── onboarding.ts     zod schema for KYC payload
-│   │   │   └── orders.ts         zod schema for buys (dollars OR shares)
+│   │   │   ├── onboarding.ts     zod schema for the KYC payload (built)
+│   │   │   └── orders.ts         zod schema for buys (dollars OR shares) — NOT built yet
 │   │   └── routes/
-│   │       ├── me/               user-aware routes (onboarding, funding, orders, portfolio)
+│   │       ├── me/
+│   │       │   └── onboarding.ts     POST /api/me/onboard — built. funding/orders/portfolio
+│   │       │                         routes still TODO (see §11 next steps)
 │   │       └── alpaca.ts         DEV/SANDBOX-ONLY test routes (URL-based account id) — remove before prod
 │   ├── supabase/migrations/
-│   │   └── 0001_init.sql         tables + RLS policies
+│   │   └── 0001_init.sql         profiles, alpaca_accounts, watchlists, watchlist_items,
+│   │                             user_settings — all tables + RLS policies, built
 │   ├── .env / .env.example       secrets (never commit .env)
 │   ├── package.json / tsconfig.json / README.md
 └── simpl-trading-app/
     ├── src/app/
-    │   ├── _layout.tsx           root layout — plain Stack for now; becomes the
-    │   │                         router state machine (§4) at the Phase 2 auth milestone
-    │   ├── index.tsx             "/" → redirects to /watchlists (app always opens there)
-    │   ├── (auth)/               PLANNED — welcome, login, signup, onboarding (no tab bar)
+    │   ├── _layout.tsx           root layout — the real router state machine (§4), built.
+    │   │                         Redirects based on useAuthState(); "/" (index.tsx) is
+    │   │                         just a loading placeholder it redirects away from.
+    │   ├── index.tsx             "/" — brief loading spinner; _layout.tsx's effect
+    │   │                         redirects everyone from here (never navigates itself)
+    │   ├── (auth)/               built — no tab bar:
+    │   │   ├── _layout.tsx           Stack: welcome, login, signup, onboarding, pending
+    │   │   ├── welcome.tsx           philosophy + Log In / Sign Up
+    │   │   ├── login.tsx             email+password -> supabase.auth.signInWithPassword
+    │   │   ├── signup.tsx            + first/last name, phone, confirm password ->
+    │   │   │                         supabase.auth.signUp (metadata -> profiles via DB trigger)
+    │   │   ├── onboarding.tsx        the KYC form -> POST /api/me/onboard
+    │   │   └── pending.tsx           shown until status = ACTIVE; manual "Check status"
+    │   │                             reads alpaca_accounts directly (RLS allows own row)
     │   └── (tabs)/               bottom tab bar — built:
     │       ├── _layout.tsx           Tabs navigator: watchlists, account, research, settings
     │       ├── watchlists/
@@ -214,14 +240,24 @@ workspace/
     │       ├── research/index.tsx    placeholder ("coming soon")
     │       └── settings/index.tsx    placeholder ("coming soon")
     ├── src/lib/
-    │   ├── api.ts                API_BASE + hardcoded ACCOUNT_ID (replace at auth milestone)
-    │   └── supabase.ts           PLANNED — Supabase client (auth + watchlists/settings)
+    │   ├── api.ts                API_BASE + hardcoded ACCOUNT_ID — STILL hardcoded; the
+    │   │                         trading screens don't derive it from the session yet
+    │   │                         (that's the next step — see §11)
+    │   └── supabase.ts           anon-key client (auth + watchlists/settings). Session
+    │                             storage uses AsyncStorage, not expo-secure-store — see
+    │                             §11's gotcha. Never throws on missing config (would crash
+    │                             web SSR); degrades to a clean network-error message instead.
     ├── src/hooks/
+    │   ├── useAuthState.ts       drives the router state machine: signed-out /
+    │   │                         needs-onboarding / pending / active, from a Supabase
+    │   │                         session + an alpaca_accounts read
     │   └── useWatchlists.ts      on-device (AsyncStorage) watchlists: [{ id, name, symbols[] }].
-    │                             No backend yet — there's no logged-in user to key a real
-    │                             Supabase watchlist on. One-time migration on first load from
-    │                             the old single-list storage key into a "My Watchlist" entry.
-    │                             Swap for real Supabase-backed watchlists at the auth milestone.
+    │                             STILL on-device, not Supabase yet — the auth milestone
+    │                             landed the login/onboarding flow itself, not the
+    │                             watchlist migration; that's still a follow-up (§11)
+    ├── src/components/
+    │   ├── FormField.tsx         labeled TextInput + error text, used by every auth/KYC form
+    │   └── ToggleField.tsx       labeled Switch row, used by the KYC disclosure questions
     ├── app.json / package.json / tsconfig.json
 ```
 
@@ -229,28 +265,30 @@ Note: `(auth)` and `(tabs)` folder names include the literal parentheses — the
 expo-router route groups that don't appear in the URL. Layout files must be named
 `_layout.tsx` with the leading underscore.
 
-**Typed routes gotcha — CORRECTED 2026-08-01, verified in a real browser (was wrong
-before):** app.json has the `typedRoutes` experiment on. For an index route (e.g.
-`[watchlistId]/index.tsx`), the generated `.expo/types/router.d.ts` often only lists
-the literal `.../index` form, and TypeScript will suggest it
-(`Did you mean ".../index"?`). **Do not follow that suggestion for `router.push`/
-`Redirect` — it's wrong at runtime.** Navigating to a literal `.../index` URL does NOT
-collapse to the index screen; if a sibling dynamic segment exists at that position
-(e.g. `[symbol].tsx` next to `index.tsx`), the router matches the dynamic route
-instead, with `"index"` as its param value. (This shipped as a real bug: clicking a
-watchlist opened the trade screen for a fake symbol called "INDEX".) The fix is the
-**collapsed path with no `/index` suffix** (`/watchlists/[watchlistId]`, the same
-pattern that works for `/account`, `/research`, `/settings`), cast with `as Href`
-since typed-routes doesn't always recognize the collapsed form as valid:
-```ts
-router.push({ pathname: "/watchlists/[watchlistId]", params: { watchlistId } } as Href);
-```
-A genuinely dynamic leaf (not an index file, e.g. `[symbol].tsx`) doesn't have this
-problem — `router.push({ pathname: "/watchlists/[watchlistId]/[symbol]", params })`
-works as typed, no cast needed. The gotcha is specifically about index routes with a
-dynamic sibling. When in doubt, check the URL bar after navigating — a URL ending in a
-literal `/index` segment (rather than the parent path) is the tell that this bug has
-recurred.
+**Typed routes — DISABLED 2026-08-04.** app.json's `typedRoutes` experiment caused two
+separate real problems (a shipped navigation bug from trusting its wrong `.../index`
+suggestion, then a typecheck failure when its generated types drifted again for
+reasons unrelated to any code change) for no real benefit at this project's size, so
+it's off. `useSegments()`/`router.push()` take plain strings now — no `Href` casts
+needed anywhere. If it's ever turned back on, re-read git history around 2026-08-01/04
+before trusting its suggestions.
+
+**Supabase client must never throw at import time — GOTCHA, 2026-08-04.** app.json's
+`web.output` used to be `"static"`, which makes expo-router server-render every web
+request (even in dev). `src/lib/supabase.ts` is imported by the root layout, so
+anything it does at module-eval time runs during that SSR pass, in Node — no `window`,
+no browser APIs. Two failures from this before it was fixed: (1) throwing when env
+vars were missing crashed SSR outright, taking down the *entire* app, not just auth;
+(2) even after fixing that, `createClient()` itself eagerly calls
+`AsyncStorage.getItem()` during initialization, which touches `window` and crashed SSR
+again. Fixed by switching `web.output` to `"single"` (plain SPA, no SSR) — this app is
+mobile-first and doesn't need SSR (CLAUDE.md §14 already called web "a fast logic/data
+preview, NOT an accurate visual preview"). `lib/supabase.ts` also still falls back to a
+placeholder URL/key instead of throwing when unconfigured, so a missing `.env` fails
+at the network layer with a normal catchable error instead of crashing anything —
+belt and suspenders. Verified via a real Playwright run: with a placeholder Supabase
+project, the app boots, every screen renders, and a login attempt fails cleanly with
+"Failed to fetch" instead of crashing.
 
 ---
 
@@ -261,14 +299,23 @@ Supabase provides `auth.users` automatically. Around it:
 - **profiles** — id (→ auth.users), first_name, last_name, phone, created_at.
   (Auto-created by a DB trigger on signup; non-sensitive display data only.)
 - **alpaca_accounts** — user_id, alpaca_account_id, account_status, created_at.
-  THE critical mapping from logged-in user → brokerage account.
+  THE critical mapping from logged-in user → brokerage account. RLS: **read-only** for
+  the owning user — no insert/update/delete policy for `authenticated` at all, since a
+  client that could rewrite its own row could point itself at someone else's brokerage
+  account. Only the backend's service-role key (which bypasses RLS) ever writes it.
 - **watchlists** — id, user_id, name, created_at.
-- **watchlist_items** — id, watchlist_id, symbol, added_at.
+- **watchlist_items** — id, watchlist_id, symbol, added_at. No `user_id` of its own —
+  its RLS policy checks ownership through the parent `watchlists` row.
 - **user_settings** — user_id + preference columns (theme, notifications, etc.).
 
-Every table has an RLS policy: `user_id = auth.uid()`. There is NO table for KYC PII or
-holdings — PII is passed through to Alpaca and discarded; holdings live at Alpaca and are
-fetched live.
+Every table has RLS enabled. There is NO table for KYC PII or holdings — PII is passed
+through to Alpaca and discarded; holdings live at Alpaca and are fetched live.
+
+**Written 2026-08-04** as `supabase/migrations/0001_init.sql` (all tables, RLS
+policies, and the `handle_new_user()` signup trigger). NOT YET APPLIED to a real
+project — run it (SQL editor or Supabase CLI) once the dashboard project finishes
+creating, then add its URL/keys to both `.env` files (see §7 installed deps and the
+gotcha above) before any of this is testable end-to-end.
 
 ---
 
@@ -292,14 +339,18 @@ fetched live.
   qty (never both); sells are checked against current holdings first, no short selling
 - `GET  /api/alpaca/accounts/:id/positions` — holdings
 
-**Planned (Phase 2, user-aware — account id derived from session, NEVER from client):**
-- `POST /api/me/onboard` — create cash account from KYC, save id+status, discard PII
-- `POST /api/me/fund`
-- `POST /api/me/orders` — buy/sell, dollars or shares, market/limit/stop
-- `GET  /api/me/positions`
-- `GET  /api/me/trading`
+**Phase 2, user-aware (account id derived from `req.user.id`, NEVER from client):**
+- `POST /api/me/onboard` — **built.** `requireAuth` preHandler verifies the Supabase
+  session, then: idempotent (returns existing status rather than double-creating if
+  already onboarded), validates the body with `schemas/onboarding.ts`, pulls
+  name/phone from `profiles` and email from the verified session (never trusts the
+  client for identity fields), builds the Alpaca payload, creates the account, saves
+  only `{ alpaca_account_id, account_status }` to `alpaca_accounts`. Still planned:
+  `POST /api/me/fund`, `POST /api/me/orders`, `GET /api/me/positions`,
+  `GET /api/me/trading` — the trading screens still use the URL-based `/api/alpaca/*`
+  routes with the hardcoded `ACCOUNT_ID` until these land (see §11 next steps).
 
-When Phase 2 lands, the `me/*` routes replace the URL-based ones for real users, and
+As the rest of the `me/*` routes land, they replace the URL-based ones for real users;
 `routes/alpaca.ts` is removed before production.
 
 ---
@@ -349,17 +400,39 @@ When Phase 2 lands, the `me/*` routes replace the URL-based ones for real users,
   open the trade screen (correct symbol, real bid/ask, real position) → right-click AAPL
   → "Remove from Watchlist" sheet → confirm → AAPL gone. Zero console errors.
   Screenshots aren't retained anywhere in the repo; rerun the script to re-verify.
+- **Auth/onboarding built 2026-08-04:** Supabase Auth (welcome/login/signup) + KYC
+  onboarding (§10's `/api/me/onboard`) + the real router state machine (§4) all landed
+  — see §8's file tree. **NOT YET tested against a real Supabase project** — the
+  dashboard project was still being created as of this writing. What IS verified via
+  Playwright: the app boots and every auth screen renders correctly even with **no**
+  real Supabase project configured (falls back to a placeholder client rather than
+  crashing — see §8's SSR gotcha); a login attempt against that placeholder fails
+  cleanly ("Failed to fetch") instead of crashing; and — the important security
+  property — directly navigating to `/watchlists`, `/account`, or `/onboarding` while
+  signed out always bounces to `/welcome`, so the tab-bar app is genuinely unreachable
+  without a session. Once real Supabase credentials exist (see §9's migration note and
+  the two `.env.example` files), a full signup → KYC → ACTIVE → tabs run-through still
+  needs to happen for the first time.
+- **Two decisions from this milestone worth remembering:** KYC PII still never touches
+  our database (§2/§3/§6/§9 — the onboarding route pulls name/phone from `profiles`
+  and email from the session, and only ever persists `{ alpaca_account_id,
+  account_status }`); and Redux was considered and declined for watchlist caching —
+  `@tanstack/react-query` (already planned, §7) is the right tool for reducing
+  Supabase read load, not a client-state library, which solves a different problem.
+- **Not yet done:** the on-device `useWatchlists.ts` hasn't been migrated to Supabase,
+  and the trading screens still use the hardcoded `ACCOUNT_ID` — the auth milestone
+  landed login/KYC itself, not the "swap everything else over" step. See next steps.
 
 **Immediate next steps (build iteratively, test after each):**
-1. Stock search (cache Alpaca's tradable-assets list; don't hit it per keystroke) —
+1. Finish creating the Supabase project, run `0001_init.sql`, add the URL/keys to both
+   `.env` files, and do the first real signup → KYC → ACTIVE run-through together.
+2. Swap the hardcoded `ACCOUNT_ID` (`lib/api.ts`) for the real logged-in user's account
+   — derive it from the session everywhere the trading screens call the backend.
+3. Migrate `useWatchlists.ts` from AsyncStorage to real Supabase-backed watchlists
+   (RLS-scoped to the user), with `@tanstack/react-query` for caching/refetch.
+4. Stock search (cache Alpaca's tradable-assets list; don't hit it per keystroke) —
    replaces the manual-ticker-entry watchlist add flow.
-2. **Auth milestone:** replace the hardcoded ACCOUNT_ID with a logged-in Supabase user
-   (Phase 2). This is when it becomes a real multi-user app, not a prototype. Also
-   swaps the on-device watchlist for a real Supabase-backed one keyed on the user.
-3. Then: onboarding/KYC screens, real Settings/Research content, subscription paywall
-   (last).
-
-Build valuable money screens first, wrap onboarding/auth around them after.
+5. Then: real Settings/Research content, subscription paywall (last).
 
 ---
 

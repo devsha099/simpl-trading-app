@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { config } from "./config.js";
 import { alpacaRoutes } from "./routes/alpaca.js";
+import { meRoutes } from "./routes/me/onboarding.js";
 import { AlpacaError } from "./alpaca.js";
 
 const app = Fastify({ logger: true });
@@ -24,6 +25,7 @@ app.setErrorHandler((error, _req, reply) => {
 });
 
 app.register(alpacaRoutes, { prefix: "/api/alpaca" });
+app.register(meRoutes, { prefix: "/api/me" });
 
 app
   .listen({ port: config.port, host: "0.0.0.0" })

@@ -1,9 +1,16 @@
-import { Redirect } from "expo-router";
+import { ActivityIndicator, SafeAreaView, StyleSheet } from "react-native";
 
-// The app always opens on the Watchlists tab (see CLAUDE.md §5/§6).
-// This gets replaced by the real router state machine (CLAUDE.md §4 — not
-// logged in -> welcome, no account -> onboarding, etc.) at the Phase 2 auth
-// milestone; for now there's no auth state to route on yet.
+// The root layout's router state machine (CLAUDE.md §4) handles all
+// navigation away from here based on auth state — this screen just needs to
+// exist so "/" has something to render while that decision resolves.
 export default function Index() {
-  return <Redirect href="/watchlists" />;
+  return (
+    <SafeAreaView style={styles.screen}>
+      <ActivityIndicator />
+    </SafeAreaView>
+  );
 }
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#ffffff" },
+});

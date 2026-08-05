@@ -28,4 +28,10 @@ export const config = {
     process.env.ALPACA_DATA_BASE_URL ?? "https://data.sandbox.alpaca.markets",
   alpacaKeyId: required("ALPACA_API_KEY_ID"),
   alpacaSecret: required("ALPACA_API_SECRET"),
+  // Not required() eagerly: the server should still boot and serve the
+  // existing /api/alpaca/* sandbox routes even before Supabase is set up.
+  // supabase.ts validates these itself, lazily, only when /api/me/* routes
+  // actually need a Supabase client.
+  supabaseUrl: process.env.SUPABASE_URL,
+  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
 };
