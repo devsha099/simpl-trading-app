@@ -169,7 +169,9 @@ directly after their own actions instead of relying on this listener.
 - Installed: `@supabase/supabase-js`, `@react-native-async-storage/async-storage`,
   `react-native-url-polyfill`, `expo-secure-store` (added to the config plugins list but
   not yet wired into the Supabase auth storage adapter — session storage currently uses
-  AsyncStorage; see §11's gotcha on why), `react-hook-form` + `zod` + `@hookform/resolvers`.
+  AsyncStorage; see §11's gotcha on why), `react-hook-form` + `zod` + `@hookform/resolvers`,
+  `@react-native-picker/picker` (the KYC state dropdown — works cross-platform,
+  renders as a native picker on iOS/Android and an HTML `<select>` on web).
 - Still planned: `@tanstack/react-query` (for real Supabase-backed watchlists —
   see next steps), `nativewind`.
 - Later: `react-native-purchases` (RevenueCat), Plaid.
@@ -195,14 +197,24 @@ workspace/
 │   │   │                         lazily validated so the server still boots without it
 │   │   ├── auth.ts               preHandler: verify session token, attach req.user
 │   │   ├── db/
-│   │   │   └── accounts.ts       look up / save a user's alpaca_account_id + status
+│   │   │   └── accounts.ts       look up / save / update a user's alpaca_account_id + status
+│   │   ├── data/
+│   │   │   └── usStates.ts       USPS state/territory codes — backs the `state` enum in
+│   │   │                         schemas/onboarding.ts. Mirrored (not shared) in the app's
+│   │   │                         lib/usStates.ts; two npm projects, no shared package.
 │   │   ├── schemas/
-│   │   │   ├── onboarding.ts     zod schema for the KYC payload (built)
+│   │   │   ├── onboarding.ts     zod schema for the KYC payload (built) — state is a strict
+│   │   │   │                     enum, postalCode/taxId are format-checked, free-text fields
+│   │   │   │                     are length-bounded (see §11, §12)
 │   │   │   └── orders.ts         zod schema for buys (dollars OR shares) — NOT built yet
 │   │   └── routes/
 │   │       ├── me/
-│   │       │   └── onboarding.ts     POST /api/me/onboard — built. funding/orders/portfolio
-│   │       │                         routes still TODO (see §11 next steps)
+│   │       │   ├── onboarding.ts     POST /api/me/onboard — built. funding/orders/portfolio
+│   │       │   │                     routes still TODO (see §11 next steps)
+│   │       │   └── status.ts         GET /api/me/status — built 2026-08-06. Re-checks the
+│   │       │                         user's status with Alpaca and syncs alpaca_accounts if
+│   │       │                         it changed (see §11 — onboarding only wrote it once,
+│   │       │                         at creation, so nothing else kept it current before this)
 │   │       └── alpaca.ts         DEV/SANDBOX-ONLY test routes (URL-based account id) — remove before prod
 │   ├── supabase/migrations/
 │   │   ├── 0001_init.sql         profiles, alpaca_accounts, watchlists, watchlist_items,
@@ -220,14 +232,23 @@ workspace/
     │   ├── index.tsx             "/" — brief loading spinner; _layout.tsx's effect
     │   │                         redirects everyone from here (never navigates itself)
     │   ├── (auth)/               built — no tab bar:
-    │   │   ├── _layout.tsx           Stack: welcome, login, signup, onboarding, pending
+    │   │   ├── _layout.tsx           Stack: welcome, login, signup, verify-email, onboarding, pending
     │   │   ├── welcome.tsx           philosophy + Log In / Sign Up
     │   │   ├── login.tsx             email+password -> supabase.auth.signInWithPassword
     │   │   ├── signup.tsx            + first/last name, phone, confirm password ->
-    │   │   │                         supabase.auth.signUp (metadata -> profiles via DB trigger)
-    │   │   ├── onboarding.tsx        the KYC form -> POST /api/me/onboard
-    │   │   └── pending.tsx           shown until status = ACTIVE; manual "Check status"
-    │   │                             reads alpaca_accounts directly (RLS allows own row)
+    │   │   │                         supabase.auth.signUp (metadata -> profiles via DB trigger);
+    │   │   │                         on "confirmation required" routes to verify-email instead
+    │   │   │                         of just showing an inert message (see §11, §12)
+    │   │   ├── verify-email.tsx      built 2026-08-06. 6-digit OTP code entry ->
+    │   │   │                         supabase.auth.verifyOtp({type:"signup"}) + a resend
+    │   │   │                         button -> supabase.auth.resend({type:"signup"}). Replaces
+    │   │   │                         relying on the emailed magic link (see §11, §12 gotcha)
+    │   │   ├── onboarding.tsx        the KYC form -> POST /api/me/onboard. State is a
+    │   │   │                         dropdown (lib/usStates.ts), postal code and SSN are
+    │   │   │                         format-validated (see §11)
+    │   │   └── pending.tsx           shown until status = ACTIVE; "Check status" calls
+    │   │                             GET /api/me/status (backend re-checks Alpaca live —
+    │   │                             see §11) instead of re-reading the DB's cached value
     │   └── (tabs)/               bottom tab bar — built:
     │       ├── _layout.tsx           Tabs navigator: watchlists, account, research, settings
     │       ├── watchlists/
@@ -246,14 +267,26 @@ workspace/
     │   ├── api.ts                API_BASE + hardcoded ACCOUNT_ID — STILL hardcoded; the
     │   │                         trading screens don't derive it from the session yet
     │   │                         (that's the next step — see §11)
+    │   ├── usStates.ts           USPS state/territory list for the KYC dropdown — mirrors
+    │   │                         the backend's data/usStates.ts (see §8's backend tree)
     │   └── supabase.ts           anon-key client (auth + watchlists/settings). Session
     │                             storage uses AsyncStorage, not expo-secure-store — see
     │                             §11's gotcha. Never throws on missing config (would crash
     │                             web SSR); degrades to a clean network-error message instead.
+    ├── src/context/
+    │   └── AuthStateContext.tsx   wraps the ONE useAuthState() instance the root layout
+    │                              routes on, so onboarding.tsx/pending.tsx can call
+    │                              its `refresh()` and have the SAME state update —
+    │                              calling useAuthState() again from those screens would
+    │                              make an independent copy (see §11's bounce-back bug)
     ├── src/hooks/
     │   ├── useAuthState.ts       drives the router state machine: signed-out /
     │   │                         needs-onboarding / pending / active, from a Supabase
-    │   │                         session + an alpaca_accounts read
+    │   │                         session + an alpaca_accounts read. If the DB row exists
+    │   │                         but isn't ACTIVE, also calls GET /api/me/status to re-check
+    │   │                         with Alpaca before settling on "pending" (see §11). Returns
+    │   │                         `{ status, refresh }` — refresh() re-evaluates on demand,
+    │   │                         used before navigating after onboarding/status-check actions
     │   └── useWatchlists.ts      on-device (AsyncStorage) watchlists: [{ id, name, symbols[] }].
     │                             STILL on-device, not Supabase yet — the auth milestone
     │                             landed the login/onboarding flow itself, not the
@@ -351,6 +384,11 @@ too). Both ran via the SQL Editor, in order. A fresh project needs both, in orde
   `POST /api/me/fund`, `POST /api/me/orders`, `GET /api/me/positions`,
   `GET /api/me/trading` — the trading screens still use the URL-based `/api/alpaca/*`
   routes with the hardcoded `ACCOUNT_ID` until these land (see §11 next steps).
+- `GET /api/me/status` — **built 2026-08-06.** Re-checks the caller's account with
+  Alpaca (`alpaca.getAccount`) and writes the result to `alpaca_accounts` if it
+  changed, then returns `{ status }`. Onboarding only ever wrote the status once, at
+  creation — this is what actually keeps it current afterward. Called by the pending
+  screen's "Check status" button and by `useAuthState` on every launch/auth event.
 
 As the rest of the `me/*` routes land, they replace the URL-based ones for real users;
 `routes/alpaca.ts` is removed before production.
@@ -439,10 +477,85 @@ As the rest of the `me/*` routes land, they replace the URL-based ones for real 
 - **Not yet done:** the on-device `useWatchlists.ts` hasn't been migrated to Supabase,
   and the trading screens still use the hardcoded `ACCOUNT_ID` — the auth milestone
   landed login/KYC itself, not the "swap everything else over" step. See next steps.
+- **Four real problems found via the founder's own signup attempt (not testing —
+  actually using the app) plus a real Playwright pass, fixed 2026-08-06:**
+  1. **Pending screen stuck forever, even after Alpaca approved the account.**
+     `POST /api/me/onboard` only ever wrote `account_status` once, at creation time —
+     nothing afterward ever re-checked Alpaca, so the DB row (and therefore the router,
+     and the pending screen's old "Check status") stayed on whatever status the account
+     had at the moment KYC was submitted, forever. This is exactly the "ACTIVE→tabs
+     transition" gap flagged as unverified in the previous milestone — now we know why
+     it wouldn't have worked even if sandbox had approved in time. Fixed with a new
+     `GET /api/me/status` (§10) that re-fetches from Alpaca and syncs the DB if it
+     changed; `useAuthState.ts` and `pending.tsx` both call it now instead of reading
+     `alpaca_accounts` directly. Still poll-on-demand (launch + the manual button), not
+     push — an Alpaca account-status webhook is the eventual real fix, unchanged from
+     the plan in §6/§11.
+  2. **A second, previously-undiscovered bug in the same code path: even after fix
+     #1, navigating straight to `/pending` or `/watchlists` got immediately bounced
+     back by the router guard.** `_layout.tsx`'s guard re-runs on every route change,
+     including ones `onboarding.tsx`/`pending.tsx` trigger themselves — and it was
+     reading the OLD `useAuthState` value each time, since finishing onboarding or a
+     status check becoming ACTIVE aren't Supabase auth events, so nothing told the hook
+     to re-evaluate. Net effect: `router.replace("/pending")` right after a successful
+     KYC submit landed on `/pending` for a frame and then got yanked straight back to
+     `/onboarding`, silently, with the account already created. This was never
+     caught before because every prior verification pass tested the transition via a
+     fresh login (which re-evaluates cleanly on mount) rather than the same-session
+     "just submitted/just checked" moment. Fixed by moving `useAuthState` behind a
+     `context/AuthStateContext.tsx` provider (one shared instance instead of one per
+     caller) exposing `refresh()`; `onboarding.tsx` and `pending.tsx` now `await
+     refresh()` before navigating, so the guard's next run already agrees with where
+     they're going instead of fighting it.
+  3. **Signup confirmation email pointed at `localhost`, unusable from another
+     device.** The emailed magic link's URL comes from Supabase's "Site URL" setting,
+     which is set to a local dev address — opening it anywhere but the machine running
+     `expo start` does nothing. Fixed by switching to an emailed OTP code instead of
+     the link: `signup.tsx` now routes to a new `verify-email.tsx` screen on
+     "confirmation required," which calls `supabase.auth.verifyOtp({ type: "signup" })`
+     (plus a resend button via `supabase.auth.resend`). A typed code has no dependency
+     on any URL, so it works from whatever device you're reading the email on. Caught
+     while building this: the code is NOT the commonly-assumed 6 digits — this
+     project's Supabase instance generates 8 — so the input is validated as
+     4-10 digits rather than a hardcoded length. **Still requires a one-time Supabase
+     dashboard change to work for real signups — see §12** (verified below using
+     `admin.generateLink`'s `email_otp`, which bypasses the email template entirely,
+     so the real emailed version is still unconfirmed).
+  4. **KYC form hardening (state dropdown, ZIP format, general input validation).**
+     `state` is now a real dropdown (`lib/usStates.ts` / `data/usStates.ts`, USPS
+     codes) validated as a strict enum on both client and server — previously free
+     text. `postalCode` and `taxId` are now regex-validated (5-digit or ZIP+4;
+     9-digit SSN with or without dashes, normalized to dashed before it's sent to
+     Alpaca). Free-text fields (`streetAddress`, `city`) got length bounds. Worth
+     being precise about the actual threat model here: none of this was ever reachable
+     for classic SQL injection — every DB read/write in this codebase goes through the
+     Supabase JS client's query builder (parameterized under the hood via PostgREST),
+     and there is no raw SQL string-building anywhere in `simpl-trading-backend/src`.
+     Alpaca's side is a JSON API, not SQL. The new validation is real defense-in-depth
+     (and directly serves the dropdown/ZIP request) but isn't closing an actual
+     injection hole that existed.
+  - **Verified via a real Playwright run** (not just typecheck): used
+    `admin.auth.admin.generateLink({ type: "signup" })` to create two real Supabase
+    test users and get a real, testable OTP without needing a live inbox → drove the
+    actual UI through `verify-email` (real `verifyOtp` call, 8-digit code) →
+    `onboarding` (selected a real state from the dropdown, submitted an invalid ZIP
+    and confirmed the client-side rejection message, then a valid one) → a real Alpaca
+    sandbox account was created (`SUBMITTED`) → landed on `/pending` with **no
+    bounce-back** (confirming fix #2) → deliberately corrupted the `alpaca_accounts`
+    row to a fake status via the admin client → clicked "Check status" → confirmed
+    `GET /api/me/status` returned Alpaca's real status (not the corrupted one) and the
+    DB row self-healed (confirming fix #1 actually works, not just compiles). Zero
+    console errors. Both test users deleted afterward. **Not yet verified:** the real
+    emailed OTP (template change is still a manual step — see §12), and a live
+    sandbox SUBMITTED→ACTIVE transition specifically (this run only proved the sync
+    endpoint correctly overwrites a mismatched status, not a real Alpaca-side approval
+    landing on its own).
 
 **Immediate next steps (build iteratively, test after each):**
-1. Finish creating the Supabase project, run `0001_init.sql`, add the URL/keys to both
-   `.env` files, and do the first real signup → KYC → ACTIVE run-through together.
+1. Edit the Supabase dashboard's "Confirm signup" email template to display
+   `{{ .Token }}` (see §12 — required for the new OTP verify screen to work at all),
+   then do a fresh real signup → verify-email code → KYC → status-sync run-through to
+   confirm today's three fixes actually hold up end to end (only typechecked so far).
 2. Swap the hardcoded `ACCOUNT_ID` (`lib/api.ts`) for the real logged-in user's account
    — derive it from the session everywhere the trading screens call the backend.
 3. Migrate `useWatchlists.ts` from AsyncStorage to real Supabase-backed watchlists
@@ -479,6 +592,27 @@ As the rest of the `me/*` routes land, they replace the URL-based ones for real 
   can't place a duplicate order.
 - **Dev environment:** Windows + PowerShell. Use `curl.exe` (not the `curl` alias) for
   API testing; quote JSON bodies with single quotes.
+- **Supabase's "Confirm signup" email template must be edited to show `{{ .Token }}`
+  before the OTP verify screen works** — dashboard: Authentication → Email Templates →
+  "Confirm signup". Supabase always generates the OTP token alongside the magic link,
+  but the default template only renders `{{ .ConfirmationURL }}`, so the code is
+  computed and simply never shown unless the template displays it. This is a one-time
+  manual dashboard action (like `0002_grants.sql` was) — no code fixes this, since we
+  don't control Supabase's default templates. Add a line like "Your confirmation code
+  is {{ .Token }}" to the template body. The link can stay in the template too; the app
+  just doesn't use it anymore (see §11).
+- **`account_status` in `alpaca_accounts` needs an explicit re-check to ever change
+  after onboarding** — nothing polls Alpaca automatically in the background. `GET
+  /api/me/status` (§10) does the re-check; it only runs when something calls it
+  (app launch, an auth event, or the pending screen's button), not on a timer.
+- **Any screen that navigates based on a state change that ISN'T a Supabase auth
+  event must `refresh()` the shared `AuthStateContext` first, or the root layout's
+  guard will bounce the navigation right back** (see §11's bounce-back bug). The
+  guard re-runs on every route change using whatever `useAuthState` last computed;
+  if that screen just changed what the "right" status is (onboarding completing, a
+  status check finding ACTIVE) without telling the hook, the guard still has the old
+  value and reasserts it. Import `useAuthStateContext` (not `useAuthState` directly —
+  that makes an independent, useless copy) and `await refresh()` before `router.replace`.
 
 ---
 

@@ -1,10 +1,13 @@
 import { useCallback, useState } from "react";
 import { useRouter } from "expo-router";
 import { ActivityIndicator, Pressable, SafeAreaView, StyleSheet, Text } from "react-native";
+import { useAuthStateContext } from "../../context/AuthStateContext";
+import { API_BASE } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
 
 export default function PendingScreen() {
   const router = useRouter();
+  const { refresh } = useAuthStateContext();
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -13,31 +16,41 @@ export default function PendingScreen() {
     setMessage(null);
     try {
       const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData.session?.user.id;
-      if (!userId) {
+      const token = sessionData.session?.access_token;
+      if (!token) {
         router.replace("/welcome");
         return;
       }
 
-      const { data, error } = await supabase
-        .from("alpaca_accounts")
-        .select("account_status")
-        .eq("user_id", userId)
-        .maybeSingle();
+      // Re-check with Alpaca through the backend (never read the DB's cached
+      // status directly here) — the DB is only ever written once at
+      // onboarding time, so a real approval since then would never show up
+      // otherwise. See routes/me/status.ts.
+      const res = await fetch(`${API_BASE}/api/me/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => null);
 
-      if (error || !data) {
+      if (!res.ok || !body?.status) {
         setMessage("Couldn't check your status. Try again in a moment.");
         return;
       }
-      if (data.account_status === "ACTIVE") {
+      if (body.status === "ACTIVE") {
+        // Becoming ACTIVE isn't a Supabase auth event, so the shared auth
+        // state (which the root layout's guard routes on) doesn't know yet.
+        // Refresh it before navigating — otherwise the guard re-runs on the
+        // route change with its old "pending" value and bounces right back.
+        await refresh();
         router.replace("/watchlists");
       } else {
-        setMessage(`Still ${String(data.account_status).toLowerCase()}. This can take a little while.`);
+        setMessage(`Still ${String(body.status).toLowerCase()}. This can take a little while.`);
       }
+    } catch {
+      setMessage("Couldn't reach the backend. Check that it's running.");
     } finally {
       setChecking(false);
     }
-  }, [router]);
+  }, [router, refresh]);
 
   return (
     <SafeAreaView style={styles.screen}>

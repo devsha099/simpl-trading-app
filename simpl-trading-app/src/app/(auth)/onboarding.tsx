@@ -1,26 +1,35 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import { Picker } from "@react-native-picker/picker";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
-import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, StyleSheet, Text } from "react-native";
+import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from "react-native";
 import { z } from "zod";
 import { FormField } from "../../components/FormField";
 import { ToggleField } from "../../components/ToggleField";
+import { useAuthStateContext } from "../../context/AuthStateContext";
 import { API_BASE } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
+import { US_STATES } from "../../lib/usStates";
 
 // v1 simplification: one "country" field doubles as citizenship, birth, and
 // tax-residence country on submit — matches the shape already proven against
 // the Alpaca sandbox (routes/alpaca.ts's /test-account). Revisit for
 // non-US users. Funding source defaults to "employment_income" server-side.
+//
+// Mirrors the backend's schemas/onboarding.ts validation (state enum, ZIP
+// format, length bounds) so bad input is caught here with an immediate
+// message instead of round-tripping to the server first. The backend copy is
+// still the real boundary — this is only ever a UX shortcut, since a client
+// can always send whatever it wants directly to the API.
 const schema = z.object({
-  streetAddress: z.string().min(1, "Enter your street address"),
-  city: z.string().min(1, "Enter your city"),
-  state: z.string().min(1, "Enter your state"),
-  postalCode: z.string().min(1, "Enter your postal code"),
+  streetAddress: z.string().trim().min(1, "Enter your street address").max(100),
+  city: z.string().trim().min(1, "Enter your city").max(100),
+  state: z.string().min(1, "Select your state"),
+  postalCode: z.string().regex(/^\d{5}(-\d{4})?$/, "Use a 5-digit ZIP or ZIP+4"),
   country: z.string().length(3, "3-letter code, e.g. USA"),
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
-  taxId: z.string().min(9, "Enter a valid SSN"),
+  taxId: z.string().regex(/^\d{3}-?\d{2}-?\d{4}$/, "Enter a valid 9-digit SSN"),
   countryOfCitizenship: z.string().length(3, "3-letter code, e.g. USA"),
   isControlPerson: z.boolean(),
   isAffiliatedExchangeOrFinra: z.boolean(),
@@ -34,6 +43,7 @@ type FormValues = z.infer<typeof schema>;
 
 export default function OnboardingScreen() {
   const router = useRouter();
+  const { refresh } = useAuthStateContext();
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const {
@@ -96,6 +106,12 @@ export default function OnboardingScreen() {
         return;
       }
 
+      // Completing onboarding isn't a Supabase auth event, so the shared
+      // auth state (which the root layout's guard routes on) doesn't know
+      // anything changed yet. Refresh it BEFORE navigating — otherwise the
+      // guard re-runs on the route change with its old "needs-onboarding"
+      // value and immediately bounces this navigation right back here.
+      await refresh();
       router.replace(body?.status === "ACTIVE" ? "/watchlists" : "/pending");
     } catch (e) {
       setServerError("Couldn't reach the backend. Check that it's running.");
@@ -137,14 +153,18 @@ export default function OnboardingScreen() {
           control={control}
           name="state"
           render={({ field }) => (
-            <FormField
-              label="State"
-              value={field.value}
-              onChangeText={field.onChange}
-              error={errors.state?.message}
-              placeholder="CA"
-              autoCapitalize="characters"
-            />
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>State</Text>
+              <View style={styles.pickerWrapper}>
+                <Picker selectedValue={field.value} onValueChange={field.onChange}>
+                  <Picker.Item label="Select a state..." value="" />
+                  {US_STATES.map((s) => (
+                    <Picker.Item key={s.code} label={`${s.name} (${s.code})`} value={s.code} />
+                  ))}
+                </Picker>
+              </View>
+              {errors.state ? <Text style={styles.pickerError}>{errors.state.message}</Text> : null}
+            </View>
           )}
         />
         <Controller
@@ -156,7 +176,9 @@ export default function OnboardingScreen() {
               value={field.value}
               onChangeText={field.onChange}
               error={errors.postalCode?.message}
-              keyboardType="number-pad"
+              keyboardType="numbers-and-punctuation"
+              placeholder="12345"
+              maxLength={10}
             />
           )}
         />
@@ -309,6 +331,15 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 12,
   },
+  field: { marginBottom: 16 },
+  fieldLabel: { fontSize: 13, fontWeight: "600", color: "#374151", marginBottom: 6 },
+  pickerWrapper: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    overflow: "hidden",
+  },
+  pickerError: { fontSize: 12, color: "#b91c1c", marginTop: 4 },
   fieldError: { fontSize: 12, color: "#b91c1c", marginTop: -8, marginBottom: 12 },
   serverError: { color: "#b91c1c", fontSize: 14, marginTop: 16, marginBottom: 4 },
   button: {

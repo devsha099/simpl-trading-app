@@ -31,3 +31,13 @@ export async function saveAccountForUser(
 
   if (error) throw error;
 }
+
+/** Update the status of an already-saved account (e.g. after re-checking with Alpaca). */
+export async function updateAccountStatus(userId: string, accountStatus: string): Promise<void> {
+  const { error } = await getSupabaseAdmin()
+    .from("alpaca_accounts")
+    .update({ account_status: accountStatus })
+    .eq("user_id", userId);
+
+  if (error) throw error;
+}

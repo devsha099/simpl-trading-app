@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Slot, useRouter, useSegments } from "expo-router";
 import { ActivityIndicator, SafeAreaView, StyleSheet } from "react-native";
-import { useAuthState } from "../hooks/useAuthState";
+import { AuthStateProvider, useAuthStateContext } from "../context/AuthStateContext";
 
 // The router state machine (CLAUDE.md §4). Runs on every launch and on every
 // auth-state change, deciding where the user belongs:
@@ -10,7 +10,15 @@ import { useAuthState } from "../hooks/useAuthState";
 // This makes the app resilient to quitting mid-flow — routing reads real
 // state instead of assuming a linear path.
 export default function RootLayout() {
-  const authState = useAuthState();
+  return (
+    <AuthStateProvider>
+      <RootLayoutNav />
+    </AuthStateProvider>
+  );
+}
+
+function RootLayoutNav() {
+  const authState = useAuthStateContext();
   // Widened to a plain string[] — the exact tuple type expo-router infers
   // depends on which route is currently matched, and a shorter array safely
   // yields `undefined` at unused indices anyway, which is what we want here.
@@ -26,7 +34,10 @@ export default function RootLayout() {
 
     if (authState.status === "signed-out") {
       const alreadyOnEntryScreen =
-        currentAuthScreen === "welcome" || currentAuthScreen === "login" || currentAuthScreen === "signup";
+        currentAuthScreen === "welcome" ||
+        currentAuthScreen === "login" ||
+        currentAuthScreen === "signup" ||
+        currentAuthScreen === "verify-email";
       if (!alreadyOnEntryScreen) router.replace("/welcome");
     } else if (authState.status === "needs-onboarding") {
       if (currentAuthScreen !== "onboarding") router.replace("/onboarding");

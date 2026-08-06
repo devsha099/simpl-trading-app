@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { US_STATE_CODES } from "../data/usStates.js";
 
 /**
  * What the CLIENT submits for KYC. Deliberately does NOT include name, email,
@@ -14,13 +15,15 @@ import { z } from "zod";
  * funding sources become relevant.
  */
 export const onboardingSchema = z.object({
-  streetAddress: z.array(z.string().min(1)).min(1),
-  city: z.string().min(1),
-  state: z.string().min(1),
-  postalCode: z.string().min(1),
+  streetAddress: z.array(z.string().trim().min(1).max(100)).min(1).max(2),
+  city: z.string().trim().min(1).max(100),
+  state: z.enum([...US_STATE_CODES] as [string, ...string[]], {
+    message: "Enter a valid US state",
+  }),
+  postalCode: z.string().regex(/^\d{5}(-\d{4})?$/, "Use a 5-digit ZIP or ZIP+4"),
   country: z.string().length(3), // ISO 3166-1 alpha-3, e.g. "USA"
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
-  taxId: z.string().min(9, "Enter a valid SSN"),
+  taxId: z.string().regex(/^\d{3}-?\d{2}-?\d{4}$/, "Enter a valid 9-digit SSN"),
   countryOfCitizenship: z.string().length(3),
   isControlPerson: z.boolean(),
   isAffiliatedExchangeOrFinra: z.boolean(),

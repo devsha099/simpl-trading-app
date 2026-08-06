@@ -60,7 +60,9 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
         given_name: profile.first_name,
         family_name: profile.last_name,
         date_of_birth: input.dateOfBirth,
-        tax_id: input.taxId,
+        // Normalize to NNN-NN-NNNN: the schema accepts the SSN with or
+        // without dashes, but Alpaca expects the dashed format.
+        tax_id: input.taxId.replace(/\D/g, "").replace(/^(\d{3})(\d{2})(\d{4})$/, "$1-$2-$3"),
         tax_id_type: "USA_SSN",
         country_of_citizenship: input.countryOfCitizenship,
         country_of_birth: input.countryOfCitizenship,

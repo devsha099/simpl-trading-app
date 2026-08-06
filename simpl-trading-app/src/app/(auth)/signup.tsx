@@ -26,7 +26,6 @@ export default function SignupScreen() {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const {
     control,
     handleSubmit,
@@ -46,7 +45,6 @@ export default function SignupScreen() {
   const onSubmit = async (values: FormValues) => {
     setSubmitting(true);
     setServerError(null);
-    setInfoMessage(null);
 
     const { data, error } = await supabase.auth.signUp({
       email: values.email,
@@ -63,7 +61,11 @@ export default function SignupScreen() {
     }
     if (!data.session) {
       // Email confirmation is required before Supabase issues a session.
-      setInfoMessage("Check your email to confirm your account, then log in.");
+      // Route to a typed-code screen rather than relying on the emailed
+      // magic link — that link points at whatever Site URL is configured
+      // (e.g. localhost during dev), which is dead on arrival if the email
+      // is opened on a different device. A 6-digit code works from anywhere.
+      router.push(`/verify-email?email=${encodeURIComponent(values.email)}`);
       return;
     }
     // A session was issued immediately — the root layout's auth-state
@@ -158,7 +160,6 @@ export default function SignupScreen() {
         />
 
         {serverError ? <Text style={styles.serverError}>{serverError}</Text> : null}
-        {infoMessage ? <Text style={styles.infoMessage}>{infoMessage}</Text> : null}
 
         <Pressable
           style={[styles.button, submitting && styles.buttonDisabled]}
@@ -184,7 +185,6 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#ffffff" },
   content: { padding: 24, paddingTop: 32 },
   serverError: { color: "#b91c1c", fontSize: 14, marginBottom: 12 },
-  infoMessage: { color: "#111827", fontSize: 14, marginBottom: 12 },
   button: {
     backgroundColor: "#111827",
     paddingVertical: 16,
