@@ -205,8 +205,11 @@ workspace/
 │   │       │                         routes still TODO (see §11 next steps)
 │   │       └── alpaca.ts         DEV/SANDBOX-ONLY test routes (URL-based account id) — remove before prod
 │   ├── supabase/migrations/
-│   │   └── 0001_init.sql         profiles, alpaca_accounts, watchlists, watchlist_items,
-│   │                             user_settings — all tables + RLS policies, built
+│   │   ├── 0001_init.sql         profiles, alpaca_accounts, watchlists, watchlist_items,
+│   │   │                         user_settings — all tables + RLS policies
+│   │   └── 0002_grants.sql       base table GRANTs the tables actually needed —
+│   │                             RLS policies alone left every query 403ing, service
+│   │                             role included (see §11). Both applied, in order.
 │   ├── .env / .env.example       secrets (never commit .env)
 │   ├── package.json / tsconfig.json / README.md
 └── simpl-trading-app/
@@ -311,11 +314,10 @@ Supabase provides `auth.users` automatically. Around it:
 Every table has RLS enabled. There is NO table for KYC PII or holdings — PII is passed
 through to Alpaca and discarded; holdings live at Alpaca and are fetched live.
 
-**Written 2026-08-04** as `supabase/migrations/0001_init.sql` (all tables, RLS
-policies, and the `handle_new_user()` signup trigger). NOT YET APPLIED to a real
-project — run it (SQL editor or Supabase CLI) once the dashboard project finishes
-creating, then add its URL/keys to both `.env` files (see §7 installed deps and the
-gotcha above) before any of this is testable end-to-end.
+**Applied 2026-08-06** to the real Supabase project (`avhnfuffwevdcwapkmnh`) as
+`supabase/migrations/0001_init.sql` (tables, RLS, signup trigger) followed by
+`0002_grants.sql` (see §11 — RLS alone wasn't enough; the base GRANTs were missing
+too). Both ran via the SQL Editor, in order. A fresh project needs both, in order.
 
 ---
 
@@ -400,19 +402,34 @@ As the rest of the `me/*` routes land, they replace the URL-based ones for real 
   open the trade screen (correct symbol, real bid/ask, real position) → right-click AAPL
   → "Remove from Watchlist" sheet → confirm → AAPL gone. Zero console errors.
   Screenshots aren't retained anywhere in the repo; rerun the script to re-verify.
-- **Auth/onboarding built 2026-08-04:** Supabase Auth (welcome/login/signup) + KYC
-  onboarding (§10's `/api/me/onboard`) + the real router state machine (§4) all landed
-  — see §8's file tree. **NOT YET tested against a real Supabase project** — the
-  dashboard project was still being created as of this writing. What IS verified via
-  Playwright: the app boots and every auth screen renders correctly even with **no**
-  real Supabase project configured (falls back to a placeholder client rather than
-  crashing — see §8's SSR gotcha); a login attempt against that placeholder fails
-  cleanly ("Failed to fetch") instead of crashing; and — the important security
-  property — directly navigating to `/watchlists`, `/account`, or `/onboarding` while
-  signed out always bounces to `/welcome`, so the tab-bar app is genuinely unreachable
-  without a session. Once real Supabase credentials exist (see §9's migration note and
-  the two `.env.example` files), a full signup → KYC → ACTIVE → tabs run-through still
-  needs to happen for the first time.
+- **Auth/onboarding built 2026-08-04, verified end-to-end against the real Supabase
+  project 2026-08-06:** Supabase Auth (welcome/login/signup) + KYC onboarding (§10's
+  `/api/me/onboard`) + the real router state machine (§4) — see §8's file tree.
+  Confirmed via a real Playwright run against real infrastructure (not mocks): a
+  Supabase-admin-created confirmed user → the `handle_new_user()` trigger correctly
+  populated `profiles` from signup metadata → logging in via the real UI landed on
+  `/onboarding` (no `alpaca_accounts` row yet, correctly detected) → filled and
+  submitted the real KYC form → backend validated it, pulled name/phone/email from
+  `profiles`/the session (never the client), and called the real Alpaca sandbox API →
+  **a real Alpaca account was created** (`201`, `status: "SUBMITTED"`) → the row landed
+  in `alpaca_accounts` correctly → re-logging in routed to `/pending` (status isn't
+  `ACTIVE` yet) → "Check status" read `alpaca_accounts` directly via RLS and reported
+  the real status → resubmitting KYC returned `200` with the existing status instead of
+  creating a second Alpaca account (the idempotency guard works). Zero console errors
+  anywhere in the flow. Test user and its rows were deleted after (cascades via
+  `on delete cascade`); the sandbox Alpaca account was left in place (harmless fake
+  data). What's genuinely NOT yet exercised: the plain `signUp()` path when Supabase's
+  project has email confirmation enabled (this run used a pre-confirmed admin-created
+  user to test login+onboarding specifically, not the confirmation-email UX itself),
+  and the ACTIVE→tabs transition (sandbox hadn't approved the test account by the time
+  it was deleted).
+- **Real bug caught during that verification, now fixed as `0002_grants.sql`:**
+  `0001_init.sql` defined RLS policies but never `GRANT`ed the underlying table
+  privileges — GRANTs and RLS are independent, additive checks, and a policy can't
+  substitute for a missing GRANT. Every query 403'd with "permission denied for table
+  X" (Postgres `42501`), **including from the service-role key**, which is supposed to
+  bypass RLS entirely — it still needs the base GRANT. If you ever spin up a fresh
+  project, both `0001_init.sql` and `0002_grants.sql` need to run, in order.
 - **Two decisions from this milestone worth remembering:** KYC PII still never touches
   our database (§2/§3/§6/§9 — the onboarding route pulls name/phone from `profiles`
   and email from the session, and only ever persists `{ alpaca_account_id,
