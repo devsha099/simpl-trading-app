@@ -9,6 +9,7 @@ import { FormField } from "../../components/FormField";
 import { ToggleField } from "../../components/ToggleField";
 import { useAuthStateContext } from "../../context/AuthStateContext";
 import { API_BASE } from "../../lib/api";
+import { colors, fonts, labelCaps } from "../../lib/theme";
 import { supabase } from "../../lib/supabase";
 import { US_STATES } from "../../lib/usStates";
 
@@ -41,10 +42,44 @@ const schema = z.object({
 });
 type FormValues = z.infer<typeof schema>;
 
+// /api/me/onboard's error responses don't all carry a `.message` — zod
+// failures return `{ error: "invalid_body", details }` and Alpaca rejections
+// return `{ error: "alpaca_error", details }` (Alpaca's own error body).
+// Falling back straight to a generic string on either of those (as this
+// screen used to) hides the actual reason a submission failed, making a real
+// problem indistinguishable from a real one. Decode both shapes so whatever
+// actually went wrong is visible instead of a dead-end message.
+function extractErrorMessage(body: unknown): string {
+  const fallback = "Something went wrong submitting your application.";
+  if (!body || typeof body !== "object") return fallback;
+  const b = body as Record<string, unknown>;
+
+  if (typeof b.message === "string") return b.message;
+
+  if (b.error === "invalid_body" && b.details && typeof b.details === "object") {
+    const fieldErrors = (b.details as Record<string, unknown>).fieldErrors;
+    if (fieldErrors && typeof fieldErrors === "object") {
+      const messages = Object.entries(fieldErrors as Record<string, string[]>).flatMap(([field, msgs]) =>
+        msgs.map((m) => `${field}: ${m}`),
+      );
+      if (messages.length) return messages.join("\n");
+    }
+  }
+
+  if (b.error === "alpaca_error" && b.details && typeof b.details === "object") {
+    const details = b.details as Record<string, unknown>;
+    const alpacaMessage = typeof details.message === "string" ? details.message : JSON.stringify(details);
+    return `Alpaca rejected the application: ${alpacaMessage}`;
+  }
+
+  return fallback;
+}
+
 export default function OnboardingScreen() {
   const router = useRouter();
   const { refresh } = useAuthStateContext();
   const [submitting, setSubmitting] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const {
     control,
@@ -102,7 +137,7 @@ export default function OnboardingScreen() {
 
       const body = await res.json().catch(() => null);
       if (!res.ok) {
-        setServerError(body?.message ?? "Something went wrong submitting your application.");
+        setServerError(extractErrorMessage(body));
         return;
       }
 
@@ -112,7 +147,10 @@ export default function OnboardingScreen() {
       // guard re-runs on the route change with its old "needs-onboarding"
       // value and immediately bounces this navigation right back here.
       await refresh();
-      router.replace(body?.status === "ACTIVE" ? "/watchlists" : "/pending");
+      // Not ACTIVE yet: the investment-profile questionnaire fills the wait
+      // instead of parking the user on the pending screen (that screen shows
+      // afterward, only if Alpaca still hasn't approved).
+      router.replace(body?.status === "ACTIVE" ? "/watchlists" : "/investment-profile");
     } catch (e) {
       setServerError("Couldn't reach the backend. Check that it's running.");
     } finally {
@@ -120,9 +158,19 @@ export default function OnboardingScreen() {
     }
   };
 
+  const signOut = async () => {
+    setSigningOut(true);
+    await supabase.auth.signOut();
+    router.replace("/welcome");
+  };
+
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Pressable onPress={signOut} disabled={signingOut} style={styles.signOutLink}>
+          <Text style={styles.signOutText}>{signingOut ? "Signing out..." : "Not you? Sign out"}</Text>
+        </Pressable>
+
         <Text style={styles.sectionTitle}>Address</Text>
         <Controller
           control={control}
@@ -156,10 +204,10 @@ export default function OnboardingScreen() {
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>State</Text>
               <View style={styles.pickerWrapper}>
-                <Picker selectedValue={field.value} onValueChange={field.onChange}>
-                  <Picker.Item label="Select a state..." value="" />
+                <Picker selectedValue={field.value} onValueChange={field.onChange} style={styles.picker} dropdownIconColor={colors.amber}>
+                  <Picker.Item label="Select a state..." value="" color={colors.paperDim} />
                   {US_STATES.map((s) => (
-                    <Picker.Item key={s.code} label={`${s.name} (${s.code})`} value={s.code} />
+                    <Picker.Item key={s.code} label={`${s.name} (${s.code})`} value={s.code} color={colors.paper} />
                   ))}
                 </Picker>
               </View>
@@ -311,7 +359,7 @@ export default function OnboardingScreen() {
           disabled={submitting}
         >
           {submitting ? (
-            <ActivityIndicator color="#ffffff" />
+            <ActivityIndicator color={colors.buttonInk} />
           ) : (
             <Text style={styles.buttonText}>Submit</Text>
           )}
@@ -322,33 +370,42 @@ export default function OnboardingScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#ffffff" },
+  screen: { flex: 1, backgroundColor: colors.ink },
   content: { padding: 24, paddingTop: 16, paddingBottom: 48 },
+  signOutLink: { alignSelf: "flex-end", marginBottom: 8 },
+  signOutText: { fontFamily: fonts.body, fontSize: 13, color: colors.paperDim },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#111827",
+    fontFamily: fonts.display,
+    fontSize: 16,
+    color: colors.amber,
     marginTop: 16,
     marginBottom: 12,
   },
   field: { marginBottom: 16 },
-  fieldLabel: { fontSize: 13, fontWeight: "600", color: "#374151", marginBottom: 6 },
+  fieldLabel: { ...labelCaps, marginBottom: 8 },
   pickerWrapper: {
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#d1d5db",
+    borderWidth: 1.5,
+    borderColor: colors.inkLine,
+    backgroundColor: colors.inkRaised,
     overflow: "hidden",
   },
-  pickerError: { fontSize: 12, color: "#b91c1c", marginTop: 4 },
-  fieldError: { fontSize: 12, color: "#b91c1c", marginTop: -8, marginBottom: 12 },
-  serverError: { color: "#b91c1c", fontSize: 14, marginTop: 16, marginBottom: 4 },
+  picker: { color: colors.paper, backgroundColor: "transparent", fontFamily: fonts.body },
+  pickerError: { fontFamily: fonts.body, fontSize: 12, color: colors.rust, marginTop: 6 },
+  fieldError: { fontFamily: fonts.body, fontSize: 12, color: colors.rust, marginTop: -8, marginBottom: 12 },
+  serverError: { fontFamily: fonts.body, color: colors.rust, fontSize: 14, marginTop: 16, marginBottom: 4 },
   button: {
-    backgroundColor: "#111827",
+    backgroundColor: colors.amber,
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: "center",
     marginTop: 24,
+    shadowColor: colors.amber,
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
   buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: "#ffffff", fontSize: 16, fontWeight: "600" },
+  buttonText: { fontFamily: fonts.bodySemiBold, color: colors.buttonInk, fontSize: 16 },
 });

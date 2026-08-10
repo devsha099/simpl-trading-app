@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { API_BASE } from "../../../../lib/api";
 import { useWatchlists } from "../../../../hooks/useWatchlists";
+import { colors, fonts } from "../../../../lib/theme";
 
 type Snapshot = {
   lastPrice: number | null;
@@ -73,7 +74,7 @@ export default function WatchlistDetailScreen() {
   if (loading) {
     return (
       <SafeAreaView style={[styles.screen, styles.center]}>
-        <ActivityIndicator />
+        <ActivityIndicator color={colors.amber} />
       </SafeAreaView>
     );
   }
@@ -89,6 +90,8 @@ export default function WatchlistDetailScreen() {
           onChangeText={setNewSymbol}
           onSubmitEditing={handleAdd}
           placeholder="Add a ticker, e.g. MSFT"
+          placeholderTextColor={colors.paperDim}
+          selectionColor={colors.amber}
           autoCapitalize="characters"
           autoCorrect={false}
         />
@@ -160,7 +163,7 @@ export default function WatchlistDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#ffffff" },
+  screen: { flex: 1, backgroundColor: colors.ink },
   center: { justifyContent: "center", alignItems: "center" },
   addRow: {
     flexDirection: "row",
@@ -172,22 +175,24 @@ const styles = StyleSheet.create({
   },
   addInput: {
     flex: 1,
+    fontFamily: fonts.body,
     fontSize: 16,
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    color: "#111827",
+    borderWidth: 1.5,
+    borderColor: colors.inkLine,
+    backgroundColor: colors.inkRaised,
+    color: colors.paper,
   },
   addButton: {
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 12,
-    backgroundColor: "#111827",
+    backgroundColor: colors.amber,
   },
-  addButtonText: { color: "#ffffff", fontWeight: "600", fontSize: 15 },
-  empty: { textAlign: "center", color: "#9ca3af", marginTop: 48, fontSize: 15 },
+  addButtonText: { fontFamily: fonts.bodySemiBold, color: colors.buttonInk, fontSize: 15 },
+  empty: { fontFamily: fonts.body, textAlign: "center", color: colors.paperDim, marginTop: 48, fontSize: 15 },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -195,39 +200,43 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     paddingHorizontal: 24,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e5e7eb",
+    borderBottomColor: colors.inkLine,
   },
-  symbol: { fontSize: 17, fontWeight: "600", color: "#111827" },
+  symbol: { fontFamily: fonts.monoSemiBold, fontSize: 16, color: colors.paper, letterSpacing: 0.3 },
   priceCol: { alignItems: "flex-end" },
-  price: { fontSize: 17, fontWeight: "500", color: "#111827" },
-  change: { fontSize: 13, color: "#15803d", marginTop: 2 },
-  changeNegative: { color: "#b91c1c" },
+  price: { fontFamily: fonts.mono, fontSize: 16, color: colors.paper },
+  change: { fontFamily: fonts.mono, fontSize: 12.5, color: colors.phosphor, marginTop: 2 },
+  changeNegative: { color: colors.rust },
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
+    backgroundColor: "rgba(0,0,0,0.6)",
     justifyContent: "flex-end",
   },
   sheet: {
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.inkRaised,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     padding: 20,
     paddingBottom: 32,
+    borderTopWidth: 1,
+    borderColor: colors.inkLine,
   },
   sheetTitle: {
+    fontFamily: fonts.monoSemiBold,
     textAlign: "center",
     fontSize: 13,
-    color: "#9ca3af",
-    fontWeight: "600",
+    color: colors.paperDim,
     marginBottom: 12,
   },
   sheetDestructive: {
     paddingVertical: 14,
     alignItems: "center",
     borderRadius: 12,
-    backgroundColor: "#fef2f2",
+    backgroundColor: "rgba(201,107,76,0.15)",
+    borderWidth: 1,
+    borderColor: colors.rust,
   },
-  sheetDestructiveText: { color: "#b91c1c", fontWeight: "600", fontSize: 16 },
+  sheetDestructiveText: { fontFamily: fonts.bodySemiBold, color: colors.rust, fontSize: 16 },
   sheetCancel: { paddingVertical: 14, alignItems: "center", marginTop: 10 },
-  sheetCancelText: { color: "#111827", fontWeight: "600", fontSize: 16 },
+  sheetCancelText: { fontFamily: fonts.bodySemiBold, color: colors.paper, fontSize: 16 },
 });

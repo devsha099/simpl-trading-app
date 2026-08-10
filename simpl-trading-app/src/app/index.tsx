@@ -1,4 +1,5 @@
 import { ActivityIndicator, SafeAreaView, StyleSheet } from "react-native";
+import { colors } from "../lib/theme";
 
 // The root layout's router state machine (CLAUDE.md §4) handles all
 // navigation away from here based on auth state — this screen just needs to
@@ -6,11 +7,11 @@ import { ActivityIndicator, SafeAreaView, StyleSheet } from "react-native";
 export default function Index() {
   return (
     <SafeAreaView style={styles.screen}>
-      <ActivityIndicator />
+      <ActivityIndicator color={colors.amber} />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#ffffff" },
+  screen: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.ink },
 });

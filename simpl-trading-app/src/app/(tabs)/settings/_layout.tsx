@@ -1,7 +1,7 @@
 import { Stack } from "expo-router";
 import { colors, fonts } from "../../../lib/theme";
 
-export default function WatchlistsLayout() {
+export default function SettingsLayout() {
   return (
     <Stack
       screenOptions={{
@@ -12,9 +12,8 @@ export default function WatchlistsLayout() {
         headerTitleStyle: { fontFamily: fonts.bodySemiBold, color: colors.paper, fontSize: 16 },
       }}
     >
-      <Stack.Screen name="index" options={{ title: "Watchlists" }} />
-      <Stack.Screen name="[watchlistId]/index" options={{ title: "" }} />
-      <Stack.Screen name="[watchlistId]/[symbol]" options={{ title: "" }} />
+      <Stack.Screen name="index" options={{ title: "Settings" }} />
+      <Stack.Screen name="profile" options={{ title: "Profile" }} />
     </Stack>
   );
 }

@@ -31,7 +31,14 @@ export const supabase = createClient(
       storage: AsyncStorage,
       autoRefreshToken: true,
       persistSession: true,
-      detectSessionInUrl: false,
+      // Needs to be true on web: clicking an emailed confirmation/recovery
+      // link redirects back here with the session in the URL hash, and this
+      // is what actually reads it — otherwise the link "works" (Supabase
+      // verifies it server-side) but the app never picks up the resulting
+      // session and just looks like it dumped you back at the welcome
+      // screen. No-ops harmlessly on native, which never receives these
+      // links via window.location in the first place.
+      detectSessionInUrl: true,
     },
   },
 );

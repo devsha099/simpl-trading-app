@@ -1,83 +1,105 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useState } from "react";
-
-const STORAGE_KEY = "simpl.watchlists.v2";
-// Old single-watchlist storage, from before multiple named watchlists existed.
-// Migrated into a single "My Watchlist" the first time this hook loads.
-const LEGACY_KEY = "simpl.watchlist.symbols";
+import { supabase } from "../lib/supabase";
 
 export type Watchlist = { id: string; name: string; symbols: string[] };
 
-// On-device only for now — there's no logged-in user yet to key a real
-// Supabase watchlist on. Swap for Supabase at the Phase 2 auth milestone.
+/**
+ * Supabase-backed, RLS-scoped to the logged-in user (watchlists/watchlist_items
+ * tables, 0001_init.sql) — replaces the old on-device AsyncStorage version now
+ * that real auth exists (see CLAUDE.md §11's "ownership and personalization"
+ * milestone). create/add/remove update local state optimistically before the
+ * Supabase write resolves, so callers keep firing them without awaiting,
+ * matching the previous synchronous-feeling API. Low-stakes data (not money),
+ * so a failed background write just logs a warning rather than rolling back
+ * the optimistic update — worth revisiting if watchlists ever affect trading.
+ */
 export function useWatchlists() {
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          setWatchlists(JSON.parse(raw));
-          return;
-        }
+  const load = useCallback(async () => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user.id;
+    if (!userId) {
+      setWatchlists([]);
+      setLoading(false);
+      return;
+    }
 
-        const legacyRaw = await AsyncStorage.getItem(LEGACY_KEY);
-        const legacySymbols: string[] = legacyRaw ? JSON.parse(legacyRaw) : [];
-        const migrated: Watchlist[] =
-          legacySymbols.length > 0
-            ? [{ id: `${Date.now()}`, name: "My Watchlist", symbols: legacySymbols }]
-            : [];
-        setWatchlists(migrated);
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
-      } catch {
-        setWatchlists([]);
-      } finally {
-        setLoading(false);
+    const { data, error } = await supabase
+      .from("watchlists")
+      .select("id, name, watchlist_items(symbol)")
+      .order("created_at", { ascending: true });
+
+    if (error || !data) {
+      setWatchlists([]);
+      setLoading(false);
+      return;
+    }
+
+    setWatchlists(
+      (data as { id: string; name: string; watchlist_items: { symbol: string }[] }[]).map((w) => ({
+        id: w.id,
+        name: w.name,
+        symbols: (w.watchlist_items ?? []).map((i) => i.symbol),
+      })),
+    );
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const createWatchlist = useCallback((name: string) => {
+    const clean = name.trim();
+    if (!clean) return;
+    (async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id;
+      if (!userId) return;
+      const { data, error } = await supabase
+        .from("watchlists")
+        .insert({ user_id: userId, name: clean })
+        .select("id, name")
+        .single();
+      if (error || !data) {
+        console.warn("Failed to create watchlist:", error?.message);
+        return;
       }
+      setWatchlists((prev) => [...prev, { id: data.id, name: data.name, symbols: [] }]);
     })();
   }, []);
 
-  const persist = useCallback(async (next: Watchlist[]) => {
-    setWatchlists(next);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  const addSymbol = useCallback((watchlistId: string, symbol: string) => {
+    const clean = symbol.trim().toUpperCase();
+    if (!clean) return;
+    setWatchlists((prev) =>
+      prev.map((w) =>
+        w.id === watchlistId && !w.symbols.includes(clean) ? { ...w, symbols: [...w.symbols, clean] } : w,
+      ),
+    );
+    supabase
+      .from("watchlist_items")
+      .insert({ watchlist_id: watchlistId, symbol: clean })
+      .then(({ error }) => {
+        if (error) console.warn("Failed to add symbol:", error.message);
+      });
   }, []);
 
-  const createWatchlist = useCallback(
-    (name: string) => {
-      const clean = name.trim();
-      if (!clean) return;
-      persist([...watchlists, { id: `${Date.now()}`, name: clean, symbols: [] }]);
-    },
-    [watchlists, persist],
-  );
-
-  const addSymbol = useCallback(
-    (watchlistId: string, symbol: string) => {
-      const clean = symbol.trim().toUpperCase();
-      if (!clean) return;
-      persist(
-        watchlists.map((w) =>
-          w.id === watchlistId && !w.symbols.includes(clean)
-            ? { ...w, symbols: [...w.symbols, clean] }
-            : w,
-        ),
-      );
-    },
-    [watchlists, persist],
-  );
-
-  const removeSymbol = useCallback(
-    (watchlistId: string, symbol: string) => {
-      persist(
-        watchlists.map((w) =>
-          w.id === watchlistId ? { ...w, symbols: w.symbols.filter((s) => s !== symbol) } : w,
-        ),
-      );
-    },
-    [watchlists, persist],
-  );
+  const removeSymbol = useCallback((watchlistId: string, symbol: string) => {
+    setWatchlists((prev) =>
+      prev.map((w) => (w.id === watchlistId ? { ...w, symbols: w.symbols.filter((s) => s !== symbol) } : w)),
+    );
+    supabase
+      .from("watchlist_items")
+      .delete()
+      .eq("watchlist_id", watchlistId)
+      .eq("symbol", symbol)
+      .then(({ error }) => {
+        if (error) console.warn("Failed to remove symbol:", error.message);
+      });
+  }, []);
 
   return { watchlists, loading, createWatchlist, addSymbol, removeSymbol };
 }

@@ -7,13 +7,22 @@ export type AuthState =
   | { status: "loading" }
   | { status: "signed-out" }
   | { status: "needs-onboarding" }
+  | { status: "needs-investment-profile" }
   | { status: "pending" }
   | { status: "active" };
 
 /**
  * The data behind the router state machine (CLAUDE.md §4): not logged in ->
- * welcome; logged in with no alpaca_accounts row -> onboarding; has a row but
- * not ACTIVE -> pending; ACTIVE -> the main app.
+ * welcome; logged in with no alpaca_accounts row -> onboarding; has a row,
+ * not yet ACTIVE, no investor_profiles row -> the investment-profile
+ * questionnaire (shown INSTEAD of the pending screen for that one step, see
+ * investment-profile.tsx); has both rows but not ACTIVE -> pending;
+ * ACTIVE -> the main app.
+ *
+ * "needs-investment-profile" is deliberately checked AFTER "ACTIVE", not
+ * before — it's a one-time step for accounts still going through onboarding,
+ * not a retroactive requirement. An already-ACTIVE account (including ones
+ * onboarded before this questionnaire existed) never gets sent back for it.
  *
  * Re-evaluates on every Supabase auth event (login/logout/token refresh) and
  * on mount (so relaunching the app re-checks), plus on demand via the
@@ -63,17 +72,33 @@ export function useAuthState(): AuthState & { refresh: () => Promise<void> } {
 
     // Not ACTIVE in our DB yet — ask the backend to re-check with Alpaca
     // directly rather than trusting a value that may just be stale. Falls
-    // back to "pending" (not stuck loading) if the backend is unreachable.
+    // back to the not-active path (not stuck loading) if it's unreachable.
+    let isActive = false;
     try {
       const res = await fetch(`${API_BASE}/api/me/status`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       const body = await res.json().catch(() => null);
-      if (!mountedRef.current) return;
-      setState({ status: res.ok && body?.status === "ACTIVE" ? "active" : "pending" });
+      isActive = res.ok && body?.status === "ACTIVE";
     } catch {
-      if (mountedRef.current) setState({ status: "pending" });
+      isActive = false;
     }
+    if (!mountedRef.current) return;
+    if (isActive) {
+      setState({ status: "active" });
+      return;
+    }
+
+    // Still not active: fill in the questionnaire while Alpaca reviews, and
+    // only fall through to the pending screen once it's done.
+    const { data: investorProfile } = await supabase
+      .from("investor_profiles")
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (!mountedRef.current) return;
+    setState({ status: investorProfile ? "pending" : "needs-investment-profile" });
   }, []);
 
   useEffect(() => {
@@ -81,7 +106,15 @@ export function useAuthState(): AuthState & { refresh: () => Promise<void> } {
 
     supabase.auth.getSession().then(({ data }) => evaluate(data.session));
 
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
+      // verifyOtp({type:"recovery"}) establishes a real session but fires
+      // this distinct event instead of a normal SIGNED_IN specifically so
+      // the app can tell the difference — evaluating it here like any other
+      // sign-in would route the guard straight to onboarding/pending/tabs
+      // before reset-password.tsx has actually let the user set a new
+      // password. That screen calls refresh() itself once updateUser
+      // succeeds, which is the correct moment to route.
+      if (event === "PASSWORD_RECOVERY") return;
       evaluate(session);
     });
 

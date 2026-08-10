@@ -1,3 +1,5 @@
+import { supabase } from "./supabase";
+
 // ---------------------------------------------------------------------------
 // EDIT THIS LINE.
 //
@@ -7,8 +9,24 @@
 //   • Physical phone (Expo Go):   http://<your-computer-LAN-IP>:4000
 //        e.g. http://192.168.1.42:4000  (same Wi-Fi; find it with ipconfig/ifconfig)
 // ---------------------------------------------------------------------------
-export const API_BASE = "http://localhost:4000";
+export const API_BASE = "http://192.168.1.216:4000";
 
-// Hardcoded sandbox test account. Replace with the logged-in user's account at
-// the Phase 2 auth milestone (see CLAUDE.md §11) — never take this from the client.
-export const ACCOUNT_ID = "9f6103d8-9e59-450d-bda8-103c450e6114";
+/**
+ * fetch() against our backend with the logged-in user's Supabase session
+ * token attached. Every /api/me/* route derives the Alpaca account id from
+ * that token server-side — the client never sends an account id (CLAUDE.md
+ * §3's security boundary). This replaced the old hardcoded ACCOUNT_ID.
+ */
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+
+  return fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init.headers ?? {}),
+    },
+  });
+}

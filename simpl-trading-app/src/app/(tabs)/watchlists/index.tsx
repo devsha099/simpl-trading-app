@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import { useWatchlists } from "../../../hooks/useWatchlists";
+import { colors, fonts, labelCaps } from "../../../lib/theme";
 
 export default function WatchlistsHomeScreen() {
   const router = useRouter();
@@ -33,7 +34,7 @@ export default function WatchlistsHomeScreen() {
   if (loading) {
     return (
       <SafeAreaView style={[styles.screen, styles.center]}>
-        <ActivityIndicator />
+        <ActivityIndicator color={colors.amber} />
       </SafeAreaView>
     );
   }
@@ -86,6 +87,8 @@ export default function WatchlistsHomeScreen() {
               value={name}
               onChangeText={setName}
               placeholder="e.g. Tech stocks"
+              placeholderTextColor={colors.paperDim}
+              selectionColor={colors.amber}
               autoFocus
               onSubmitEditing={handleCreate}
             />
@@ -105,7 +108,7 @@ export default function WatchlistsHomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#ffffff" },
+  screen: { flex: 1, backgroundColor: colors.ink },
   center: { justifyContent: "center", alignItems: "center" },
   newButton: {
     marginHorizontal: 20,
@@ -113,11 +116,16 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     paddingVertical: 14,
     borderRadius: 12,
-    backgroundColor: "#111827",
+    backgroundColor: colors.amber,
     alignItems: "center",
+    shadowColor: colors.amber,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
-  newButtonText: { color: "#ffffff", fontWeight: "600", fontSize: 15 },
-  empty: { textAlign: "center", color: "#9ca3af", marginTop: 48, fontSize: 15 },
+  newButtonText: { fontFamily: fonts.bodySemiBold, color: colors.buttonInk, fontSize: 15 },
+  empty: { fontFamily: fonts.body, textAlign: "center", color: colors.paperDim, marginTop: 48, fontSize: 15 },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -125,13 +133,13 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     paddingHorizontal: 24,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e5e7eb",
+    borderBottomColor: colors.inkLine,
   },
-  name: { fontSize: 17, fontWeight: "600", color: "#111827" },
-  count: { fontSize: 14, color: "#9ca3af" },
+  name: { fontFamily: fonts.display, fontSize: 17, color: colors.paper },
+  count: { ...labelCaps, fontSize: 11 },
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
+    backgroundColor: "rgba(0,0,0,0.6)",
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
@@ -139,28 +147,32 @@ const styles = StyleSheet.create({
   modalCard: {
     width: "100%",
     maxWidth: 360,
-    backgroundColor: "#ffffff",
+    backgroundColor: colors.inkRaised,
     borderRadius: 16,
     padding: 20,
+    borderWidth: 1,
+    borderColor: colors.inkLine,
   },
-  modalTitle: { fontSize: 17, fontWeight: "700", color: "#111827", marginBottom: 12 },
+  modalTitle: { fontFamily: fonts.display, fontSize: 17, color: colors.paper, marginBottom: 12 },
   modalInput: {
+    fontFamily: fonts.body,
     fontSize: 16,
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    color: "#111827",
+    borderWidth: 1.5,
+    borderColor: colors.inkLine,
+    backgroundColor: colors.ink,
+    color: colors.paper,
   },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", marginTop: 16, gap: 12 },
   modalCancel: { paddingVertical: 10, paddingHorizontal: 14 },
-  modalCancelText: { color: "#6b7280", fontWeight: "600", fontSize: 15 },
+  modalCancelText: { fontFamily: fonts.bodySemiBold, color: colors.paperDim, fontSize: 15 },
   modalCreate: {
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 10,
-    backgroundColor: "#111827",
+    backgroundColor: colors.amber,
   },
-  modalCreateText: { color: "#ffffff", fontWeight: "600", fontSize: 15 },
+  modalCreateText: { fontFamily: fonts.bodySemiBold, color: colors.buttonInk, fontSize: 15 },
 });

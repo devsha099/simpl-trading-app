@@ -9,7 +9,8 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { API_BASE, ACCOUNT_ID } from "../../../../lib/api";
+import { API_BASE, apiFetch } from "../../../../lib/api";
+import { colors, fonts, labelCaps, radius } from "../../../../lib/theme";
 
 const QUOTE_POLL_MS = 5000;
 
@@ -46,7 +47,7 @@ export default function SymbolScreen() {
   const loadPosition = useCallback(async () => {
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/alpaca/accounts/${ACCOUNT_ID}/positions`);
+      const res = await apiFetch("/api/me/positions");
       if (!res.ok) throw new Error("Backend returned an error");
       const positions: Position[] = await res.json();
       setPosition(positions.find((p) => p.symbol === symbol) ?? null);
@@ -121,14 +122,10 @@ export default function SymbolScreen() {
           ...(orderType === "stop" ? { stop_price: stopPrice } : {}),
         };
 
-        const res = await fetch(
-          `${API_BASE}/api/alpaca/accounts/${ACCOUNT_ID}/orders`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          },
-        );
+        const res = await apiFetch("/api/me/orders", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
 
         if (!res.ok) {
           const data = await res.json().catch(() => null);
@@ -153,7 +150,7 @@ export default function SymbolScreen() {
   if (loading) {
     return (
       <SafeAreaView style={[styles.screen, styles.center]}>
-        <ActivityIndicator />
+        <ActivityIndicator color={colors.amber} />
       </SafeAreaView>
     );
   }
@@ -166,9 +163,6 @@ export default function SymbolScreen() {
 
       <View style={styles.header}>
         <Text style={styles.symbolTitle}>{symbol}</Text>
-        <Text style={styles.quoteLine}>
-          Bid {money(quote?.bidPrice)} · Ask {money(quote?.askPrice)}
-        </Text>
         <Text style={styles.positionLine}>
           {position
             ? `You own ${Number(position.qty).toFixed(4)} shares · ${money(position.market_value)}`
@@ -176,86 +170,111 @@ export default function SymbolScreen() {
         </Text>
       </View>
 
+      <View style={styles.statPair}>
+        <View style={styles.statBox}>
+          <Text style={styles.statLabel}>Bid</Text>
+          <Text style={styles.statValue}>{money(quote?.bidPrice)}</Text>
+        </View>
+        <View style={styles.statBox}>
+          <Text style={styles.statLabel}>Ask</Text>
+          <Text style={styles.statValue}>{money(quote?.askPrice)}</Text>
+        </View>
+      </View>
+
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      <View style={styles.modeToggle}>
+      <View style={styles.segmented}>
         {(["market", "limit", "stop"] as OrderType[]).map((type) => (
           <Pressable
             key={type}
-            style={[styles.modeButton, orderType === type && styles.modeButtonActive]}
+            style={[styles.segment, orderType === type && styles.segmentActive]}
             onPress={() => setOrderType(type)}
           >
-            <Text style={[styles.modeText, orderType === type && styles.modeTextActive]}>
+            <Text style={[styles.segmentText, orderType === type && styles.segmentTextActive]}>
               {type === "market" ? "Market" : type === "limit" ? "Limit" : "Stop Loss"}
             </Text>
           </Pressable>
         ))}
       </View>
 
-      <View style={styles.modeToggle}>
+      <View style={styles.segmented}>
         <Pressable
-          style={[styles.modeButton, buyMode === "dollars" && styles.modeButtonActive]}
+          style={[styles.segment, buyMode === "dollars" && styles.segmentActive]}
           onPress={() => {
             setBuyMode("dollars");
             setAmount("20");
           }}
         >
-          <Text style={[styles.modeText, buyMode === "dollars" && styles.modeTextActive]}>
+          <Text style={[styles.segmentText, buyMode === "dollars" && styles.segmentTextActive]}>
             Dollars
           </Text>
         </Pressable>
         <Pressable
-          style={[styles.modeButton, buyMode === "shares" && styles.modeButtonActive]}
+          style={[styles.segment, buyMode === "shares" && styles.segmentActive]}
           onPress={() => {
             setBuyMode("shares");
             setAmount("0.2");
           }}
         >
-          <Text style={[styles.modeText, buyMode === "shares" && styles.modeTextActive]}>
+          <Text style={[styles.segmentText, buyMode === "shares" && styles.segmentTextActive]}>
             Shares
           </Text>
         </Pressable>
       </View>
 
-      <View style={styles.amountRow}>
-        {buyMode === "dollars" ? <Text style={styles.amountAffix}>$</Text> : null}
-        <TextInput
-          style={styles.amountInput}
-          value={amount}
-          onChangeText={setAmount}
-          keyboardType="decimal-pad"
-          placeholder={buyMode === "dollars" ? "20" : "0.2"}
-        />
-        {buyMode === "shares" ? <Text style={styles.amountAffix}>shares</Text> : null}
-      </View>
-
-      {estimatedCost !== undefined ? (
-        <Text style={styles.estimate}>≈ {money(estimatedCost)} at current price</Text>
-      ) : null}
-
-      {orderType === "limit" ? (
+      <View style={styles.amountBox}>
+        <Text style={styles.amountLabel}>Amount {buyMode === "dollars" ? "(USD)" : "(shares)"}</Text>
         <View style={styles.amountRow}>
-          <Text style={styles.amountAffix}>Limit $</Text>
+          {buyMode === "dollars" ? <Text style={styles.amountAffix}>$</Text> : null}
           <TextInput
             style={styles.amountInput}
-            value={limitPrice}
-            onChangeText={setLimitPrice}
+            value={amount}
+            onChangeText={setAmount}
             keyboardType="decimal-pad"
-            placeholder={midPrice ? midPrice.toFixed(2) : "0.00"}
+            placeholder={buyMode === "dollars" ? "20" : "0.2"}
+            placeholderTextColor={colors.paperDim}
+            selectionColor={colors.amber}
           />
+          {buyMode === "shares" ? <Text style={styles.amountAffix}>shares</Text> : null}
+        </View>
+        {estimatedCost !== undefined ? (
+          <Text style={styles.estimate}>≈ {money(estimatedCost)} at current price</Text>
+        ) : null}
+      </View>
+
+      {orderType === "limit" ? (
+        <View style={styles.priceBox}>
+          <Text style={styles.amountLabel}>Limit price</Text>
+          <View style={styles.amountRow}>
+            <Text style={styles.amountAffix}>$</Text>
+            <TextInput
+              style={styles.amountInput}
+              value={limitPrice}
+              onChangeText={setLimitPrice}
+              keyboardType="decimal-pad"
+              placeholder={midPrice ? midPrice.toFixed(2) : "0.00"}
+              placeholderTextColor={colors.paperDim}
+              selectionColor={colors.amber}
+            />
+          </View>
         </View>
       ) : null}
 
       {orderType === "stop" ? (
-        <View style={styles.amountRow}>
-          <Text style={styles.amountAffix}>Stop $</Text>
-          <TextInput
-            style={styles.amountInput}
-            value={stopPrice}
-            onChangeText={setStopPrice}
-            keyboardType="decimal-pad"
-            placeholder={midPrice ? midPrice.toFixed(2) : "0.00"}
-          />
+        <View style={styles.priceBox}>
+          <Text style={styles.amountLabel}>Stop price</Text>
+          <View style={styles.amountRow}>
+            <Text style={styles.amountAffix}>$</Text>
+            <TextInput
+              style={styles.amountInput}
+              value={stopPrice}
+              onChangeText={setStopPrice}
+              keyboardType="decimal-pad"
+              placeholder={midPrice ? midPrice.toFixed(2) : "0.00"}
+              placeholderTextColor={colors.paperDim}
+              selectionColor={colors.amber}
+            />
+          </View>
         </View>
       ) : null}
 
@@ -265,14 +284,14 @@ export default function SymbolScreen() {
           onPress={() => placeOrder("buy")}
           disabled={buying}
         >
-          <Text style={styles.buttonText}>{pendingSide === "buy" ? "Placing…" : "Buy"}</Text>
+          <Text style={styles.buyButtonText}>{pendingSide === "buy" ? "Placing…" : "Buy"}</Text>
         </Pressable>
         <Pressable
           style={[styles.button, styles.sellButton, buying && styles.buttonDisabled]}
           onPress={() => placeOrder("sell")}
           disabled={buying}
         >
-          <Text style={styles.buttonText}>{pendingSide === "sell" ? "Placing…" : "Sell"}</Text>
+          <Text style={styles.sellButtonText}>{pendingSide === "sell" ? "Placing…" : "Sell"}</Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -280,13 +299,16 @@ export default function SymbolScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#ffffff" },
+  screen: { flex: 1, backgroundColor: colors.ink },
   center: { justifyContent: "center", alignItems: "center" },
-  header: { padding: 24, paddingTop: 16 },
-  symbolTitle: { fontSize: 32, fontWeight: "700", color: "#111827" },
-  quoteLine: { fontSize: 15, color: "#6b7280", marginTop: 6 },
-  positionLine: { fontSize: 14, color: "#9ca3af", marginTop: 8 },
-  error: { marginHorizontal: 24, marginBottom: 8, color: "#b91c1c", fontSize: 14 },
+  header: { padding: 24, paddingTop: 12, paddingBottom: 4 },
+  symbolTitle: { fontFamily: fonts.monoSemiBold, fontSize: 30, color: colors.paper, letterSpacing: 0.3 },
+  positionLine: { fontFamily: fonts.body, fontSize: 13, color: colors.paperDim, marginTop: 8 },
+  error: { fontFamily: fonts.body, marginHorizontal: 24, marginBottom: 8, color: colors.rust, fontSize: 14 },
+  statPair: { flexDirection: "row", gap: 10, marginHorizontal: 20, marginTop: 12 },
+  statBox: { flex: 1, backgroundColor: colors.inkRaised, borderRadius: radius.md, padding: 12, borderWidth: 1, borderColor: colors.inkLine },
+  statLabel: { ...labelCaps, fontSize: 10 },
+  statValue: { fontFamily: fonts.mono, fontSize: 17, color: colors.paper, marginTop: 4 },
   actionRow: {
     flexDirection: "row",
     marginHorizontal: 20,
@@ -295,47 +317,78 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   button: { flex: 1, padding: 18, borderRadius: 14, alignItems: "center" },
-  buyButton: { backgroundColor: "#111827" },
-  sellButton: { backgroundColor: "#b91c1c" },
+  buyButton: {
+    backgroundColor: colors.amber,
+    shadowColor: colors.amber,
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  sellButton: { backgroundColor: "transparent", borderWidth: 1.5, borderColor: colors.inkLine },
   buttonDisabled: { opacity: 0.5 },
-  estimate: { textAlign: "center", color: "#6b7280", fontSize: 13, marginTop: 6 },
+  buyButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 16, color: colors.buttonInk },
+  sellButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 16, color: colors.paper },
+  estimate: { fontFamily: fonts.body, textAlign: "center", color: colors.paperDim, fontSize: 13, marginTop: 10 },
+  amountBox: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    backgroundColor: colors.inkRaised,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.inkLine,
+    paddingVertical: 16,
+    alignItems: "center",
+  },
+  priceBox: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    backgroundColor: colors.inkRaised,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.inkLine,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  amountLabel: { ...labelCaps, fontSize: 10 },
   amountRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    marginHorizontal: 20,
-    marginTop: 12,
+    marginTop: 8,
   },
   amountInput: {
-    fontSize: 20,
-    fontWeight: "600",
-    color: "#111827",
-    minWidth: 80,
+    fontFamily: fonts.monoSemiBold,
+    fontSize: 26,
+    color: colors.paper,
+    minWidth: 90,
     textAlign: "center",
-    paddingVertical: 8,
+    paddingVertical: 4,
     paddingHorizontal: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: "#d1d5db",
   },
-  amountAffix: { fontSize: 16, color: "#6b7280", marginHorizontal: 6 },
-  modeToggle: {
+  amountAffix: { fontFamily: fonts.mono, fontSize: 18, color: colors.paperDim, marginHorizontal: 4 },
+  segmented: {
     flexDirection: "row",
-    justifyContent: "center",
     marginHorizontal: 20,
-    marginTop: 12,
-    gap: 8,
+    marginTop: 14,
+    gap: 6,
+    backgroundColor: colors.inkRaised,
+    borderRadius: radius.md,
+    padding: 4,
   },
-  modeButton: {
+  segment: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    backgroundColor: "#f9fafb",
+    paddingVertical: 11,
+    borderRadius: radius.sm,
     alignItems: "center",
   },
-  modeButtonActive: { backgroundColor: "#111827", borderColor: "#111827" },
-  modeText: { color: "#111827", fontWeight: "600" },
-  modeTextActive: { color: "#ffffff" },
-  buttonText: { color: "#ffffff", fontSize: 16, fontWeight: "600" },
+  segmentActive: {
+    backgroundColor: colors.amber,
+    shadowColor: colors.amber,
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  segmentText: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.paperDim },
+  segmentTextActive: { color: colors.buttonInk },
 });

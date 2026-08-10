@@ -65,6 +65,13 @@ export const alpaca = {
       body: JSON.stringify(payload),
     }),
 
+  /** PATCH /v1/accounts/{id} — update identity/disclosures on an existing account. */
+  updateAccount: (id: string, payload: unknown) =>
+    alpacaFetch(`/v1/accounts/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
   /** GET /v1/trading/accounts/{id}/account — cash, buying power, equity. */
   getTradingAccount: (accountId: string) =>
     alpacaFetch(`/v1/trading/accounts/${accountId}/account`),
@@ -97,4 +104,12 @@ export const alpaca = {
       method: "POST",
       body: JSON.stringify(order),
     }),
+
+  /**
+   * GET /v1/trading/accounts/{id}/orders — list orders. `status` is Alpaca's
+   * own filter: "open" | "closed" | "all". Closed = filled/canceled/expired,
+   * i.e. trade history; open = still working.
+   */
+  getOrders: (accountId: string, status: "open" | "closed" | "all") =>
+    alpacaFetch(`/v1/trading/accounts/${accountId}/orders?status=${status}&limit=100`),
 };

@@ -5,6 +5,7 @@ import { Controller, useForm } from "react-hook-form";
 import { ActivityIndicator, Pressable, SafeAreaView, StyleSheet, Text } from "react-native";
 import { z } from "zod";
 import { FormField } from "../../components/FormField";
+import { colors, fonts } from "../../lib/theme";
 import { supabase } from "../../lib/supabase";
 
 // Not hardcoding a length: Supabase's OTP length is a dashboard-configurable
@@ -96,7 +97,7 @@ export default function VerifyEmailScreen() {
         onPress={handleSubmit(onSubmit)}
         disabled={submitting}
       >
-        {submitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.buttonText}>Verify</Text>}
+        {submitting ? <ActivityIndicator color={colors.buttonInk} /> : <Text style={styles.buttonText}>Verify</Text>}
       </Pressable>
       <Pressable onPress={resendCode} disabled={resending}>
         <Text style={styles.link}>{resending ? "Sending..." : "Resend code"}</Text>
@@ -106,26 +107,32 @@ export default function VerifyEmailScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#ffffff", padding: 24, justifyContent: "center" },
-  title: { fontSize: 24, fontWeight: "700", color: "#111827", textAlign: "center" },
+  screen: { flex: 1, backgroundColor: colors.ink, padding: 24, justifyContent: "center" },
+  title: { fontFamily: fonts.displayBold, fontSize: 24, color: colors.paper, textAlign: "center" },
   body: {
+    fontFamily: fonts.body,
     fontSize: 15,
-    color: "#6b7280",
+    color: colors.paperDim,
     textAlign: "center",
     marginTop: 12,
     marginBottom: 24,
     lineHeight: 21,
   },
-  serverError: { color: "#b91c1c", fontSize: 14, marginBottom: 12 },
-  infoMessage: { color: "#111827", fontSize: 14, marginBottom: 12, textAlign: "center" },
+  serverError: { fontFamily: fonts.body, color: colors.rust, fontSize: 14, marginBottom: 12 },
+  infoMessage: { fontFamily: fonts.body, color: colors.phosphor, fontSize: 14, marginBottom: 12, textAlign: "center" },
   button: {
-    backgroundColor: "#111827",
+    backgroundColor: colors.amber,
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: "center",
     marginTop: 8,
+    shadowColor: colors.amber,
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
   buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: "#ffffff", fontSize: 16, fontWeight: "600" },
-  link: { color: "#6b7280", fontSize: 14, textAlign: "center", marginTop: 20 },
+  buttonText: { fontFamily: fonts.bodySemiBold, color: colors.buttonInk, fontSize: 16 },
+  link: { fontFamily: fonts.body, color: colors.paperDim, fontSize: 14, textAlign: "center", marginTop: 20 },
 });

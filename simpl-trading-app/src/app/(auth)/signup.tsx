@@ -5,15 +5,25 @@ import { Controller, useForm } from "react-hook-form";
 import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, StyleSheet, Text } from "react-native";
 import { z } from "zod";
 import { FormField } from "../../components/FormField";
+import { PasswordRequirements } from "../../components/PasswordRequirements";
+import { colors, fonts } from "../../lib/theme";
+import { isValidPassword } from "../../lib/passwordRules";
 import { supabase } from "../../lib/supabase";
+
+// North America only (see CLAUDE.md §1) — 10 digits, with or without a
+// leading country code / formatting characters.
+function isValidUsCaPhone(value: string): boolean {
+  const digits = value.replace(/\D/g, "");
+  return digits.length === 10 || (digits.length === 11 && digits.startsWith("1"));
+}
 
 const schema = z
   .object({
     firstName: z.string().min(1, "Enter your first name"),
     lastName: z.string().min(1, "Enter your last name"),
-    phone: z.string().min(7, "Enter a valid phone number"),
+    phone: z.string().refine(isValidUsCaPhone, "Enter a valid 10-digit US/Canada phone number"),
     email: z.string().email("Enter a valid email"),
-    password: z.string().min(8, "At least 8 characters"),
+    password: z.string().refine(isValidPassword, "Password doesn't meet all requirements"),
     confirmPassword: z.string(),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -46,17 +56,35 @@ export default function SignupScreen() {
     setSubmitting(true);
     setServerError(null);
 
+    // Normalize whatever format the user typed (dashes, parens, +1, none of
+    // the above) to E.164 — this is what ends up in `profiles.phone` and
+    // later in Alpaca's KYC payload, which expects a clean phone number.
+    const digits = values.phone.replace(/\D/g, "");
+    const normalizedPhone = `+${digits.length === 11 ? digits : `1${digits}`}`;
+
     const { data, error } = await supabase.auth.signUp({
       email: values.email,
       password: values.password,
       options: {
-        data: { first_name: values.firstName, last_name: values.lastName, phone: values.phone },
+        data: { first_name: values.firstName, last_name: values.lastName, phone: normalizedPhone },
       },
     });
 
     setSubmitting(false);
     if (error) {
       setServerError(error.message);
+      return;
+    }
+    // Supabase deliberately returns a 200 with a fake user object instead of
+    // an error when the email already belongs to a confirmed account — this
+    // stops attackers from probing which emails are registered. The one
+    // documented tell is an empty `identities` array (a real new signup
+    // always has exactly one, for the email provider). Without this check,
+    // the UI would claim "check your email for a code" even though Supabase
+    // silently sent nothing, leaving the user waiting on an email that will
+    // never arrive.
+    if (data.user?.identities?.length === 0) {
+      setServerError("This email is already registered. Try logging in instead.");
       return;
     }
     if (!data.session) {
@@ -112,7 +140,7 @@ export default function SignupScreen() {
               error={errors.phone?.message}
               keyboardType="phone-pad"
               autoComplete="tel"
-              placeholder="+15551234567"
+              placeholder="5551234567"
             />
           )}
         />
@@ -135,14 +163,17 @@ export default function SignupScreen() {
           control={control}
           name="password"
           render={({ field }) => (
-            <FormField
-              label="Password"
-              value={field.value}
-              onChangeText={field.onChange}
-              error={errors.password?.message}
-              secureTextEntry
-              autoComplete="new-password"
-            />
+            <>
+              <FormField
+                label="Password"
+                value={field.value}
+                onChangeText={field.onChange}
+                error={errors.password?.message}
+                secureTextEntry
+                autoComplete="new-password"
+              />
+              <PasswordRequirements password={field.value} />
+            </>
           )}
         />
         <Controller
@@ -167,7 +198,7 @@ export default function SignupScreen() {
           disabled={submitting}
         >
           {submitting ? (
-            <ActivityIndicator color="#ffffff" />
+            <ActivityIndicator color={colors.buttonInk} />
           ) : (
             <Text style={styles.buttonText}>Sign Up</Text>
           )}
@@ -182,17 +213,22 @@ export default function SignupScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#ffffff" },
+  screen: { flex: 1, backgroundColor: colors.ink },
   content: { padding: 24, paddingTop: 32 },
-  serverError: { color: "#b91c1c", fontSize: 14, marginBottom: 12 },
+  serverError: { fontFamily: fonts.body, color: colors.rust, fontSize: 14, marginBottom: 12 },
   button: {
-    backgroundColor: "#111827",
+    backgroundColor: colors.amber,
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: "center",
     marginTop: 8,
+    shadowColor: colors.amber,
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
   buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: "#ffffff", fontSize: 16, fontWeight: "600" },
-  link: { color: "#6b7280", fontSize: 14, textAlign: "center", marginTop: 20 },
+  buttonText: { fontFamily: fonts.bodySemiBold, color: colors.buttonInk, fontSize: 16 },
+  link: { fontFamily: fonts.body, color: colors.paperDim, fontSize: 14, textAlign: "center", marginTop: 20 },
 });

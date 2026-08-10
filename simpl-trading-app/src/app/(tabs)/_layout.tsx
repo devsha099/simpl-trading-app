@@ -1,13 +1,16 @@
 import { Tabs } from "expo-router";
+import { colors, fonts } from "../../lib/theme";
 
 export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: "#111827",
-        tabBarInactiveTintColor: "#9ca3af",
-        tabBarStyle: { borderTopColor: "#e5e7eb" },
+        tabBarActiveTintColor: colors.amber,
+        tabBarInactiveTintColor: colors.paperDim,
+        tabBarStyle: { backgroundColor: colors.ink, borderTopColor: colors.inkLine },
+        tabBarLabelStyle: { fontFamily: fonts.bodySemiBold, fontSize: 11 },
+        sceneStyle: { backgroundColor: colors.ink },
       }}
     >
       <Tabs.Screen name="watchlists" options={{ title: "Watchlists" }} />

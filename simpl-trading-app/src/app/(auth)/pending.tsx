@@ -3,12 +3,14 @@ import { useRouter } from "expo-router";
 import { ActivityIndicator, Pressable, SafeAreaView, StyleSheet, Text } from "react-native";
 import { useAuthStateContext } from "../../context/AuthStateContext";
 import { API_BASE } from "../../lib/api";
+import { colors, fonts } from "../../lib/theme";
 import { supabase } from "../../lib/supabase";
 
 export default function PendingScreen() {
   const router = useRouter();
   const { refresh } = useAuthStateContext();
   const [checking, setChecking] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const checkStatus = useCallback(async () => {
@@ -52,8 +54,15 @@ export default function PendingScreen() {
     }
   }, [router, refresh]);
 
+  const signOut = async () => {
+    setSigningOut(true);
+    await supabase.auth.signOut();
+    router.replace("/welcome");
+  };
+
   return (
     <SafeAreaView style={styles.screen}>
+      <ActivityIndicator color={colors.amber} style={styles.spinner} />
       <Text style={styles.title}>Almost there</Text>
       <Text style={styles.body}>
         We&apos;ve sent your application to Alpaca for review. This is usually quick
@@ -62,26 +71,37 @@ export default function PendingScreen() {
       {message ? <Text style={styles.message}>{message}</Text> : null}
       <Pressable style={styles.button} onPress={checkStatus} disabled={checking}>
         {checking ? (
-          <ActivityIndicator color="#ffffff" />
+          <ActivityIndicator color={colors.buttonInk} />
         ) : (
           <Text style={styles.buttonText}>Check status</Text>
         )}
+      </Pressable>
+      <Pressable onPress={signOut} disabled={signingOut} style={styles.signOutLink}>
+        <Text style={styles.signOutText}>{signingOut ? "Signing out..." : "Not you? Sign out"}</Text>
       </Pressable>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#ffffff", padding: 24, justifyContent: "center" },
-  title: { fontSize: 24, fontWeight: "700", color: "#111827", textAlign: "center" },
-  body: { fontSize: 15, color: "#6b7280", textAlign: "center", marginTop: 12, lineHeight: 21 },
-  message: { fontSize: 14, color: "#111827", textAlign: "center", marginTop: 16 },
+  screen: { flex: 1, backgroundColor: colors.ink, padding: 24, justifyContent: "center" },
+  spinner: { marginBottom: 20 },
+  title: { fontFamily: fonts.displayBold, fontSize: 24, color: colors.paper, textAlign: "center" },
+  body: { fontFamily: fonts.body, fontSize: 15, color: colors.paperDim, textAlign: "center", marginTop: 12, lineHeight: 21 },
+  message: { fontFamily: fonts.body, fontSize: 14, color: colors.phosphor, textAlign: "center", marginTop: 16 },
   button: {
-    backgroundColor: "#111827",
+    backgroundColor: colors.amber,
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: "center",
     marginTop: 24,
+    shadowColor: colors.amber,
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
-  buttonText: { color: "#ffffff", fontSize: 16, fontWeight: "600" },
+  buttonText: { fontFamily: fonts.bodySemiBold, color: colors.buttonInk, fontSize: 16 },
+  signOutLink: { alignItems: "center", marginTop: 20 },
+  signOutText: { fontFamily: fonts.body, fontSize: 13, color: colors.paperDim },
 });
