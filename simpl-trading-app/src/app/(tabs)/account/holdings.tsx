@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, RefreshControl, SafeAreaView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, SafeAreaView, StyleSheet, Text, View } from "react-native";
 import { apiFetch } from "../../../lib/api";
 import { colors, fonts } from "../../../lib/theme";
 
@@ -14,6 +15,7 @@ type Position = {
 const money = (v: string | undefined) => (v === undefined ? "—" : `$${Number(v).toFixed(2)}`);
 
 export default function HoldingsScreen() {
+  const router = useRouter();
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,9 +33,14 @@ export default function HoldingsScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Refetch on focus, not just on mount — otherwise selling a position on
+  // the trade screen and pressing back here would still show the
+  // pre-sale quantity until a manual pull-to-refresh or app restart.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   if (loading) {
     return (
@@ -56,7 +63,12 @@ export default function HoldingsScreen() {
         renderItem={({ item }) => {
           const pl = item.unrealized_pl !== undefined ? Number(item.unrealized_pl) : null;
           return (
-            <View style={styles.row}>
+            <Pressable
+              style={styles.row}
+              onPress={() =>
+                router.push({ pathname: "/account/[symbol]", params: { symbol: item.symbol } })
+              }
+            >
               <View>
                 <Text style={styles.symbol}>{item.symbol}</Text>
                 <Text style={styles.qty}>{Number(item.qty).toFixed(4)} shares</Text>
@@ -70,7 +82,7 @@ export default function HoldingsScreen() {
                   </Text>
                 ) : null}
               </View>
-            </View>
+            </Pressable>
           );
         }}
       />

@@ -9,19 +9,33 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { API_BASE, apiFetch } from "../../../../lib/api";
-import { colors, fonts, labelCaps, radius } from "../../../../lib/theme";
+import { API_BASE, apiFetch } from "../lib/api";
+import { colors, fonts, labelCaps, radius } from "../lib/theme";
 
-const QUOTE_POLL_MS = 5000;
+const QUOTE_POLL_MS = 3000;
 
 type Position = {
   symbol: string;
   qty: string;
+  qty_available?: string;
   market_value: string;
   current_price: string;
+  avg_entry_price?: string;
+  unrealized_pl?: string;
+  unrealized_plpc?: string;
 };
 
-type Quote = { bidPrice: number; askPrice: number };
+type Quote = {
+  bidPrice: number;
+  askPrice: number;
+  bidSize?: number;
+  askSize?: number;
+  lastPrice?: number | null;
+  // False for a quote that shouldn't be shown as the market — e.g. an
+  // odd-lot print or a spread implausibly wide vs. the last trade (backend
+  // flags this; see alpaca-data.ts). Falls back to lastPrice when false.
+  reliable?: boolean;
+};
 type BuyMode = "dollars" | "shares";
 type OrderType = "market" | "limit" | "stop";
 type Side = "buy" | "sell";
@@ -29,7 +43,20 @@ type Side = "buy" | "sell";
 const money = (v: string | number | undefined) =>
   v === undefined ? "—" : `$${Number(v).toFixed(2)}`;
 
-export default function SymbolScreen() {
+// unrealized_plpc from Alpaca is a raw fraction (0.036 = 3.6%), not
+// pre-multiplied like the watchlist snapshot's changePercent is.
+const pctFromFraction = (v: string | undefined) =>
+  v === undefined ? "—" : `${Number(v) >= 0 ? "+" : ""}${(Number(v) * 100).toFixed(2)}%`;
+
+/**
+ * The trade screen — bid/ask (or last price), order form, Buy/Sell. Reached
+ * two ways: from a watchlist ticker row, or from a held position on the
+ * Holdings screen (both `(tabs)/watchlists/[symbol].tsx` and
+ * `(tabs)/account/[symbol].tsx` re-export this same component so each stays
+ * within its own tab's back-stack — see CLAUDE.md §8). Reads only `symbol`
+ * from the route; nothing here depends on how the user got here.
+ */
+export default function TradeScreen() {
   const { symbol: rawSymbol } = useLocalSearchParams<{ symbol: string }>();
   const symbol = (rawSymbol ?? "").toUpperCase();
 
@@ -86,10 +113,13 @@ export default function SymbolScreen() {
     };
   }, [symbol]);
 
+  // Prefer the real midpoint only when the quote is trustworthy; otherwise
+  // the last trade price is the more accurate reference (see Quote's
+  // `reliable` comment above).
   const midPrice =
-    quote && quote.bidPrice > 0 && quote.askPrice > 0
+    quote?.reliable && quote.bidPrice > 0 && quote.askPrice > 0
       ? (quote.bidPrice + quote.askPrice) / 2
-      : undefined;
+      : quote?.lastPrice ?? undefined;
   const estimatedCost =
     buyMode === "shares" && midPrice && Number(amount) > 0
       ? Number(amount) * midPrice
@@ -137,6 +167,12 @@ export default function SymbolScreen() {
           );
           return;
         }
+        // Re-fetches real position data from Alpaca — this is what makes a
+        // sell "physically" show up here: nothing about the position is
+        // ever computed or cached client-side, it's whatever
+        // GET /api/me/positions returns right now, same source of truth
+        // the Holdings screen reads (which also now refreshes on focus,
+        // not just on mount — see holdings.tsx).
         await loadPosition();
       } catch (e) {
         setError("Couldn't reach the backend.");
@@ -157,29 +193,80 @@ export default function SymbolScreen() {
 
   const buying = pendingSide !== null;
 
+  // qty vs qty_available differ only when some shares are already tied up
+  // in another pending order — Alpaca reduces qty_available the instant an
+  // order is PLACED (not just when it fills), so this is real, live data,
+  // not something we compute.
+  const qtyAvailable = position?.qty_available ?? position?.qty;
+  const hasPendingHold =
+    position && qtyAvailable !== undefined && Number(qtyAvailable) !== Number(position.qty);
+  const pl = position?.unrealized_pl !== undefined ? Number(position.unrealized_pl) : null;
+
   return (
     <SafeAreaView style={styles.screen}>
       <Stack.Screen options={{ title: symbol }} />
 
       <View style={styles.header}>
         <Text style={styles.symbolTitle}>{symbol}</Text>
-        <Text style={styles.positionLine}>
-          {position
-            ? `You own ${Number(position.qty).toFixed(4)} shares · ${money(position.market_value)}`
-            : "You don't own this yet."}
-        </Text>
       </View>
 
-      <View style={styles.statPair}>
-        <View style={styles.statBox}>
-          <Text style={styles.statLabel}>Bid</Text>
-          <Text style={styles.statValue}>{money(quote?.bidPrice)}</Text>
+      {position ? (
+        <View style={styles.positionCard}>
+          <View style={styles.positionHeaderRow}>
+            <Text style={styles.positionLabel}>Your Position</Text>
+            {pl !== null ? (
+              <View style={[styles.plPill, pl < 0 && styles.plPillNegative]}>
+                <Text style={[styles.plPillText, pl < 0 && styles.plPillTextNegative]}>
+                  {pl >= 0 ? "+" : ""}
+                  {money(position.unrealized_pl)} ({pctFromFraction(position.unrealized_plpc)})
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          <Text style={styles.positionQty}>{Number(position.qty).toFixed(4)} shares</Text>
+          <Text style={styles.positionSub}>
+            {money(position.market_value)} value
+            {position.avg_entry_price ? ` · avg cost ${money(position.avg_entry_price)}/share` : ""}
+          </Text>
+          {hasPendingHold ? (
+            <Text style={styles.positionNote}>
+              {Number(qtyAvailable).toFixed(4)} available to sell —{" "}
+              {(Number(position.qty) - Number(qtyAvailable)).toFixed(4)} tied up in another order
+            </Text>
+          ) : (
+            <Text style={styles.positionNote}>All of it available to sell</Text>
+          )}
         </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statLabel}>Ask</Text>
-          <Text style={styles.statValue}>{money(quote?.askPrice)}</Text>
+      ) : (
+        <Text style={styles.positionLine}>You don't own this yet.</Text>
+      )}
+
+      {quote === null || quote.reliable ? (
+        <View style={styles.statPair}>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>Bid</Text>
+            <Text style={styles.statValue}>{money(quote?.bidPrice)}</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>Ask</Text>
+            <Text style={styles.statValue}>{money(quote?.askPrice)}</Text>
+          </View>
         </View>
-      </View>
+      ) : (
+        // The live quote is an odd-lot/thin print, not a trustworthy
+        // bid/ask (see Quote's `reliable` comment) — show the real last
+        // trade price instead of a potentially misleading wide spread.
+        <View style={styles.statPairSingle}>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>Last Price</Text>
+            <Text style={styles.statValue}>{money(quote.lastPrice ?? undefined)}</Text>
+          </View>
+          <Text style={styles.thinQuoteNote}>
+            The live quote is thin right now, so this is the last traded price instead of a
+            bid/ask spread.
+          </Text>
+        </View>
+      )}
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -303,10 +390,35 @@ const styles = StyleSheet.create({
   center: { justifyContent: "center", alignItems: "center" },
   header: { padding: 24, paddingTop: 12, paddingBottom: 4 },
   symbolTitle: { fontFamily: fonts.monoSemiBold, fontSize: 30, color: colors.paper, letterSpacing: 0.3 },
-  positionLine: { fontFamily: fonts.body, fontSize: 13, color: colors.paperDim, marginTop: 8 },
+  positionLine: { fontFamily: fonts.body, fontSize: 13, color: colors.paperDim, marginHorizontal: 24, marginTop: 4 },
+  positionCard: {
+    marginHorizontal: 20,
+    marginTop: 8,
+    padding: 16,
+    backgroundColor: colors.inkRaised,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.inkLine,
+  },
+  positionHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  positionLabel: { ...labelCaps, fontSize: 10.5 },
+  plPill: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    backgroundColor: "rgba(99,193,145,0.15)",
+  },
+  plPillNegative: { backgroundColor: "rgba(201,107,76,0.15)" },
+  plPillText: { fontFamily: fonts.monoMedium, fontSize: 12, color: colors.phosphor },
+  plPillTextNegative: { color: colors.rust },
+  positionQty: { fontFamily: fonts.monoSemiBold, fontSize: 22, color: colors.paper, marginTop: 10 },
+  positionSub: { fontFamily: fonts.body, fontSize: 13, color: colors.paperDim, marginTop: 4 },
+  positionNote: { fontFamily: fonts.body, fontSize: 12, color: colors.paperDim, marginTop: 8 },
   error: { fontFamily: fonts.body, marginHorizontal: 24, marginBottom: 8, color: colors.rust, fontSize: 14 },
   statPair: { flexDirection: "row", gap: 10, marginHorizontal: 20, marginTop: 12 },
+  statPairSingle: { marginHorizontal: 20, marginTop: 12 },
   statBox: { flex: 1, backgroundColor: colors.inkRaised, borderRadius: radius.md, padding: 12, borderWidth: 1, borderColor: colors.inkLine },
+  thinQuoteNote: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.paperDim, marginTop: 8 },
   statLabel: { ...labelCaps, fontSize: 10 },
   statValue: { fontFamily: fonts.mono, fontSize: 17, color: colors.paper, marginTop: 4 },
   actionRow: {

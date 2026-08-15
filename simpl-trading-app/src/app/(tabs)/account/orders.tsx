@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useFocusEffect } from "expo-router";
 import { OrderList, type Order } from "../../../components/OrderList";
 import { apiFetch } from "../../../lib/api";
 
@@ -20,9 +21,13 @@ export default function OrdersScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Refetch on focus, not just on mount, so an order placed from a
+  // watchlist or Holdings shows up here without a manual refresh.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   return (
     <OrderList

@@ -6,11 +6,17 @@ import { statusRoutes } from "./routes/me/status.js";
 import { investmentProfileRoutes } from "./routes/me/investmentProfile.js";
 import { tradingRoutes } from "./routes/me/trading.js";
 import { kycDetailsRoutes } from "./routes/me/kycDetails.js";
+import { bankingRoutes } from "./routes/me/banking.js";
 import { AlpacaError } from "./alpaca.js";
 
 const app = Fastify({ logger: true });
 import cors from "@fastify/cors";
-app.register(cors, { origin: true });
+// `methods` must be listed explicitly: @fastify/cors defaults to only the
+// CORS-safelisted GET,HEAD,POST, so a browser preflight rejects DELETE
+// before it ever reaches a route (removing a bank / canceling a transfer
+// failed silently on Expo web because of exactly this). Native clients
+// don't preflight, so this only ever bit the web build.
+app.register(cors, { origin: true, methods: ["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"] });
 
 // Health check — no Alpaca call, just proves the server is up.
 app.get("/health", async () => ({ status: "ok" }));
@@ -41,6 +47,7 @@ app.register(statusRoutes, { prefix: "/api/me" });
 app.register(investmentProfileRoutes, { prefix: "/api/me" });
 app.register(tradingRoutes, { prefix: "/api/me" });
 app.register(kycDetailsRoutes, { prefix: "/api/me" });
+app.register(bankingRoutes, { prefix: "/api/me" });
 
 app
   .listen({ port: config.port, host: "0.0.0.0" })

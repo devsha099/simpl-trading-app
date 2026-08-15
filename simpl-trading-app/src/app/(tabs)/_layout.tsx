@@ -15,7 +15,12 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="watchlists" options={{ title: "Watchlists" }} />
       <Tabs.Screen name="account" options={{ title: "Account" }} />
-      <Tabs.Screen name="research" options={{ title: "Research" }} />
+      {/* "research/index", not "research": the other three tabs are folders
+          with their own _layout.tsx, so their route is the folder name.
+          Research is a bare index.tsx with no layout, so its route keeps the
+          /index suffix — naming it "research" here matched nothing and the
+          tab rendered the raw route string as its label. */}
+      <Tabs.Screen name="research/index" options={{ title: "Research" }} />
       <Tabs.Screen name="settings" options={{ title: "Settings" }} />
     </Tabs>
   );

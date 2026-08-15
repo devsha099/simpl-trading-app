@@ -1,15 +1,49 @@
+import Constants from "expo-constants";
+import * as Device from "expo-device";
+import { Platform } from "react-native";
 import { supabase } from "./supabase";
 
 // ---------------------------------------------------------------------------
-// EDIT THIS LINE.
+// API_BASE — where your backend is reachable FROM THE DEVICE running the app.
 //
-// API_BASE — where your backend is reachable FROM THE DEVICE running the app:
-//   • iOS simulator (Mac):        http://localhost:4000
-//   • Android emulator:           http://10.0.2.2:4000
-//   • Physical phone (Expo Go):   http://<your-computer-LAN-IP>:4000
-//        e.g. http://192.168.1.42:4000  (same Wi-Fi; find it with ipconfig/ifconfig)
+// This used to be a hardcoded LAN IP that had to be hand-edited every time
+// the dev machine's network changed (new Wi-Fi, VPN connect/disconnect,
+// etc.) — it went stale silently three separate times, each one looking
+// like a backend outage ("Couldn't reach the backend") when the backend was
+// actually fine. Instead this derives the right host per environment:
+//   • Web (browser)     → localhost, always correct.
+//   • Simulator/emulator → localhost (iOS) / 10.0.2.2 (Android's fixed
+//     alias back to the host machine's own localhost).
+//   • Physical device    → Constants.expoConfig.hostUri, the exact host
+//     Expo/Metro used to reach THIS device over the QR code. If that
+//     worked, port 4000 on the same host works too — no manual IP-hunting,
+//     and it self-heals across network changes on every reload.
+// The one hardcoded fallback below only fires if hostUri is ever missing
+// (e.g. a standalone/production build with no dev server) — edit that one
+// line if you actually hit it (ipconfig/ifconfig for your current LAN IP).
 // ---------------------------------------------------------------------------
-export const API_BASE = "http://192.168.1.216:4000";
+const BACKEND_PORT = 4000;
+
+function resolveApiBase(): string {
+  if (Platform.OS === "web") return `http://localhost:${BACKEND_PORT}`;
+
+  if (!Device.isDevice) {
+    // Simulator (iOS) or emulator (Android), not a physical device.
+    const host = Platform.OS === "android" ? "10.0.2.2" : "localhost";
+    return `http://${host}:${BACKEND_PORT}`;
+  }
+
+  const lanHost = Constants.expoConfig?.hostUri?.split(":")[0];
+  if (lanHost && lanHost !== "localhost" && lanHost !== "127.0.0.1") {
+    return `http://${lanHost}:${BACKEND_PORT}`;
+  }
+
+  // Fallback of last resort — EDIT THIS to your machine's current LAN IP if
+  // you ever land here (means hostUri wasn't available for some reason).
+  return `http://10.0.0.103:${BACKEND_PORT}`;
+}
+
+export const API_BASE = resolveApiBase();
 
 /**
  * fetch() against our backend with the logged-in user's Supabase session

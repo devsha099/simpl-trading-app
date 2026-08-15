@@ -1,12 +1,14 @@
 import { useCallback, useState } from "react";
-import { useFocusEffect, useRouter } from "expo-router";
+import { Stack, useFocusEffect, useRouter } from "expo-router";
 import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from "react-native";
 import { HazyText } from "../../../components/HazyText";
 import { SpectrumStripe } from "../../../components/SpectrumStripe";
 import { apiFetch } from "../../../lib/api";
+import { cashAccountLabel } from "../../../lib/banking";
 import { colors, fonts, labelCaps } from "../../../lib/theme";
 
 type TradingAccount = {
+  account_number?: string;
   cash: string;
   buying_power: string;
   portfolio_value: string;
@@ -18,6 +20,7 @@ const SECTIONS = [
   { route: "/account/holdings", title: "Holdings", subtitle: "What you own right now" },
   { route: "/account/orders", title: "Orders", subtitle: "Orders still working" },
   { route: "/account/trade-history", title: "Trade History", subtitle: "Everything that's filled or closed" },
+  { route: "/account/banking", title: "Banking", subtitle: "Move money in and out" },
 ] as const;
 
 export default function AccountScreen() {
@@ -57,6 +60,12 @@ export default function AccountScreen() {
 
   return (
     <SafeAreaView style={styles.screen}>
+      {/* The nav header reads "#335725994 Cash Account" once the number
+          loads — the account's real Alpaca-issued brokerage number, the
+          same identifier that appears on statements. */}
+      <Stack.Screen
+        options={{ title: account?.account_number ? cashAccountLabel(account.account_number) : "Account" }}
+      />
       <ScrollView>
         <View style={styles.header}>
           <SpectrumStripe size="sm" style={styles.stripe} />

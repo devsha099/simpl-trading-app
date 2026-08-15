@@ -55,6 +55,13 @@ export const alpaca = {
   /** GET /v1/accounts — lists broker accounts. Empty [] on a fresh sandbox. */
   listAccounts: () => alpacaFetch("/v1/accounts"),
 
+  /**
+   * GET /v1/assets — every active US-equity asset (~14k, ~13.3k tradable).
+   * Not account-scoped; the caller (assetSearch.ts) caches this in memory
+   * rather than fetching it per request.
+   */
+  listAssets: () => alpacaFetch("/v1/assets?status=active&asset_class=us_equity"),
+
   /** GET /v1/accounts/{id} — fetch one account. */
   getAccount: (id: string) => alpacaFetch(`/v1/accounts/${id}`),
 
@@ -87,11 +94,35 @@ export const alpaca = {
       body: JSON.stringify(payload),
     }),
 
+  /**
+   * DELETE /v1/accounts/{id}/ach_relationships/{relationshipId} — unlink a
+   * bank. Alpaca allows only ONE active ACH relationship per account, so
+   * "switch banks" is always delete-then-create. 204 on success.
+   */
+  deleteAchRelationship: (accountId: string, relationshipId: string) =>
+    alpacaFetch(`/v1/accounts/${accountId}/ach_relationships/${relationshipId}`, {
+      method: "DELETE",
+    }),
+
   /** POST /v1/accounts/{id}/transfers — deposit/withdraw. Sandbox: instant. */
   createTransfer: (accountId: string, payload: unknown) =>
     alpacaFetch(`/v1/accounts/${accountId}/transfers`, {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+
+  /** GET /v1/accounts/{id}/transfers — deposit/withdrawal history. */
+  listTransfers: (accountId: string, limit = 50) =>
+    alpacaFetch(`/v1/accounts/${accountId}/transfers?limit=${limit}`),
+
+  /**
+   * DELETE /v1/accounts/{id}/transfers/{transferId} — cancel a transfer
+   * that hasn't reached clearing yet (QUEUED/APPROVAL_PENDING/PENDING).
+   * 204 on success, 404 if it's already past the point of no return.
+   */
+  cancelTransfer: (accountId: string, transferId: string) =>
+    alpacaFetch(`/v1/accounts/${accountId}/transfers/${transferId}`, {
+      method: "DELETE",
     }),
 
   /** GET /v1/trading/accounts/{id}/positions — holdings for one account. */

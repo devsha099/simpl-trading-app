@@ -14,7 +14,7 @@ export default function WatchlistsLayout() {
     >
       <Stack.Screen name="index" options={{ title: "Watchlists" }} />
       <Stack.Screen name="[watchlistId]/index" options={{ title: "" }} />
-      <Stack.Screen name="[watchlistId]/[symbol]" options={{ title: "" }} />
+      <Stack.Screen name="stock/[symbol]" options={{ title: "" }} />
     </Stack>
   );
 }

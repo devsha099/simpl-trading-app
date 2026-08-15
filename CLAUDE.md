@@ -135,11 +135,19 @@ instead of relying on this listener (see §12's `refresh()` gotcha).
     make one); tapping a watchlist opens its ticker list (add by typing, long-press/
     right-click a row for a "Remove from Watchlist" sheet); tapping a ticker pushes
     into the per-symbol trade screen (bid/ask, order type, dollars/shares, Buy/Sell).
-    You must add a symbol to a watchlist before you can trade it from this flow.
     Ticker rows show last price + %-change since previous close.
-  - **Account** ← portfolio value + cash at the top, then three sub-screens:
-    **Holdings** (current positions + unrealized P/L), **Orders** (still-working
-    orders), **Trade History** (filled/closed orders).
+  - **Account** ← portfolio value + cash at the top, the nav title showing the
+    account's real Alpaca-issued brokerage number ("#335725994 Cash Account"), then
+    four sub-screens: **Holdings** (current positions + unrealized P/L, tap a row to
+    trade it — see below), **Orders** (still-working orders), **Trade History**
+    (filled/closed orders), and **Banking** (see below).
+  - **Banking** (under Account) ← cash balance + settled-cash line, the linked bank
+    card, three actions — **Transfer Money** (bank → Simpl), **Withdraw Money**
+    (Simpl → bank), **Add/Remove Bank Account** — and the full transfer history with
+    a status pill per row (Pending / Complete / Rejected / Canceled). A still-pending
+    transfer can be canceled from its row. Wire transfers are deliberately out of
+    scope for now (Alpaca's sandbox is ACH-only; production supports outgoing wires
+    only).
   - **Research** ← placeholder ("coming soon")
   - **Settings** ← **Profile** (read-only view of everything on file, see §9) and
     Sign Out. More settings TBD.
@@ -168,6 +176,20 @@ instead of relying on this listener (see §12's `refresh()` gotcha).
   call. Limit orders require a `limit_price`; Stop Loss orders require a `stop_price`.
   Revisit if the live bid/ask + order-type surface starts to feel like a trading
   terminal rather than a calm buy-and-hold app.
+- **Banking is Alpaca ACH, one linked bank at a time.** Alpaca allows exactly ONE
+  active ACH relationship per account (a second create returns 409), so the UI is
+  "your linked bank" with a remove-then-add swap, never a list. Bank linking is
+  typed routing + account number today; Alpaca's same endpoint also accepts a Plaid
+  `processor_token`, so Plaid can be added later without redesigning the screen.
+  Withdrawals are capped at Alpaca's `cash_withdrawable` (its own T+1-settled
+  figure) — we display and pre-check it, Alpaca enforces it. Nothing about banking
+  is stored in our DB: bank links and transfers live at Alpaca and are fetched
+  live, exactly like holdings.
+- **The account's identity is Alpaca's own brokerage account number**, surfaced as
+  "#XXXXXXXXX Cash Account". We deliberately do NOT mint our own account ID or
+  mirror the number into our DB and attach it to transfers — it would add no
+  security (every Alpaca call is already scoped to a session-derived account id in
+  the URL path) and would just be a second copy that can drift.
 - **Investment-profile data (income/net worth/employment/marital status) is treated
   like KYC-adjacent data, not casual app data**: pushed to Alpaca via PATCH first,
   saved locally only if Alpaca accepted, so the two can't drift. Not the same as SSN
@@ -225,6 +247,10 @@ workspace/
 │   │   ├── alpaca.ts             Alpaca Broker API client (Basic auth) — account
 │   │   │                         CRUD, orders, positions, updateAccount (PATCH)
 │   │   ├── alpaca-data.ts        Alpaca Market Data client (APCA-API-KEY headers, different host)
+│   │   ├── assetSearch.ts        ticker/company-name search + exists-and-tradable
+│   │   │                         validation, backed by an in-memory cache of Alpaca's
+│   │   │                         ~13.3k tradable US-equity assets (lazy-loaded,
+│   │   │                         refreshed daily — see §11)
 │   │   ├── supabase.ts           admin Supabase client (service-role key, bypasses RLS);
 │   │   │                         lazily validated so the server still boots without it
 │   │   ├── auth.ts               preHandler: verify session token, attach req.user
@@ -329,21 +355,58 @@ workspace/
     │   └── (tabs)/               bottom tab bar:
     │       ├── _layout.tsx           Tabs navigator: watchlists, account, research, settings
     │       ├── watchlists/
-    │       │   ├── _layout.tsx           Stack: index -> [watchlistId]/index -> [watchlistId]/[symbol]
+    │       │   ├── _layout.tsx           Stack: index -> [watchlistId]/index -> stock/[symbol]
     │       │   ├── index.tsx             list of watchlists + "+ New Watchlist" (name prompt modal)
-    │       │   └── [watchlistId]/
-    │       │       ├── index.tsx         one watchlist: add-ticker input, rows (price + %
-    │       │       │                     change), long-press/right-click row -> remove sheet
-    │       │       └── [symbol].tsx      per-symbol trade screen (bid/ask, order type,
-    │       │                             dollars/shares, Buy/Sell) — symbol-agnostic
-    │       │                             (route param, not hardcoded), session-derived
-    │       │                             account via apiFetch()
+    │       │   ├── [watchlistId]/
+    │       │   │   └── index.tsx         one watchlist: add-ticker input with debounced
+    │       │   │                         autocomplete (symbol prefix OR company name,
+    │       │   │                         /api/alpaca/assets/search), tapping a suggestion
+    │       │   │                         adds it immediately; typing a full symbol and
+    │       │   │                         hitting Add/Enter instead validates it against
+    │       │   │                         /api/alpaca/assets/:symbol first — rejects
+    │       │   │                         anything not real/tradable with an inline error.
+    │       │   │                         Rows (price + % change), long-press/right-click
+    │       │   │                         row -> remove sheet
+    │       │   └── stock/[symbol].tsx    re-exports screens/TradeScreen.tsx (see below) —
+    │       │                             lives under a static "stock/" segment, NOT
+    │       │                             directly in watchlists/, because a bare
+    │       │                             [symbol].tsx there would sit alongside
+    │       │                             [watchlistId]/ as a second dynamic segment at
+    │       │                             the same level, which expo-router resolves
+    │       │                             ambiguously (confirmed live: /watchlists/NVDA
+    │       │                             silently matched [watchlistId]/index instead,
+    │       │                             treating "NVDA" as a watchlist id and rendering
+    │       │                             an empty watchlist screen — no error, just the
+    │       │                             wrong screen). See §12.
     │       ├── account/
     │       │   ├── _layout.tsx            Stack: index -> holdings / orders / trade-history
+    │       │   │                          / banking/index / banking/transfer / banking/bank
+    │       │   │                          / [symbol]
     │       │   ├── index.tsx              portfolio value + cash, then links to the three below
-    │       │   ├── holdings.tsx           current positions + unrealized P/L
-    │       │   ├── orders.tsx             open orders (GET /api/me/orders?status=open)
-    │       │   └── trade-history.tsx      closed orders (?status=closed)
+    │       │   ├── holdings.tsx           current positions + unrealized P/L; rows are
+    │       │   │                          tappable -> [symbol] (see below). Refetches on
+    │       │   │                          focus, not just on mount, so selling on the
+    │       │   │                          trade screen and coming back here shows the
+    │       │   │                          real post-sale quantity without a manual pull
+    │       │   ├── orders.tsx             open orders (GET /api/me/orders?status=open);
+    │       │   │                          also refetches on focus
+    │       │   ├── trade-history.tsx      closed orders (?status=closed); also refetches
+    │       │   │                          on focus
+    │       │   ├── [symbol].tsx           re-exports screens/TradeScreen.tsx — same trade
+    │       │   │                          screen as watchlists/stock/[symbol].tsx, reached
+    │       │   │                          from tapping a Holdings row. No sibling dynamic
+    │       │   │                          segment here (banking/ is a static name), so no
+    │       │   │                          ambiguity risk the way watchlists/ had one.
+    │       │   └── banking/
+    │       │       ├── index.tsx          hub: cash + settled cash, linked-bank card,
+    │       │       │                      the 3 actions, transfer history w/ status
+    │       │       │                      pills and per-row cancel
+    │       │       ├── transfer.tsx       BOTH directions — ?direction=deposit|withdraw
+    │       │       │                      flips From/To. Amount -> Review -> confirm
+    │       │       │                      (two steps on purpose for money movement).
+    │       │       │                      Routes you to bank.tsx if nothing is linked
+    │       │       └── bank.tsx           add (routing/account/type/nickname) or
+    │       │                              remove the one linked bank
     │       ├── research/index.tsx    placeholder ("coming soon")
     │       └── settings/
     │           ├── _layout.tsx           Stack: index -> profile
@@ -392,12 +455,29 @@ workspace/
     │                             (watchlists + watchlist_items). Optimistic local updates
     │                             so callers keep a fire-and-forget-feeling API;
     │                             react-query still not wired in (§11 next steps)
-    ├── src/components/
+    ├── src/components/            small reusable UI pieces (not full screens — see
+    │   │                           src/screens/ below for those)
     │   ├── FormField.tsx         labeled TextInput + error text, used by every auth/KYC form
-    │   ├── SelectField.tsx       labeled Picker row, used by the questionnaire dropdowns
+    │   ├── SelectField.tsx       labeled Picker row, used by questionnaire + banking dropdowns
     │   ├── PasswordRequirements.tsx  live checklist, green checks as each rule is met
     │   ├── OrderList.tsx         shared order-row list, used by both Orders and Trade History
-    │   └── ToggleField.tsx       labeled Switch row, used by the KYC disclosure questions
+    │   ├── ToggleField.tsx       labeled Switch row, used by the KYC disclosure questions
+    │   ├── HazyText.tsx          the "hazy" chromatic double-shadow text effect (§1)
+    │   └── SpectrumStripe.tsx    the spectrum-stripe bar motif + small logo mark (§1)
+    ├── src/screens/                full screen components shared across multiple routes
+    │   │                           (route files re-export these — see expo-router's
+    │   │                           "same screen, multiple paths" pattern, §12)
+    │   └── TradeScreen.tsx       bid/ask (or last price), order form, Buy/Sell, and — when
+    │                             the symbol is held — a "Your Position" card (shares
+    │                             owned, shares actually available to sell vs. tied up in
+    │                             another pending order, market value, avg cost, $ + %
+    │                             unrealized P&L). Every number there is Alpaca's own
+    │                             position data via GET /api/me/positions, re-fetched
+    │                             after every order — nothing is computed or cached
+    │                             client-side. Re-exported by both
+    │                             watchlists/stock/[symbol].tsx and account/[symbol].tsx
+    │                             so each stays in its own tab's back-stack (added
+    │                             2026-08-14 when Holdings rows became tappable)
     ├── app.json / package.json / tsconfig.json
 ```
 
@@ -410,6 +490,21 @@ expo-router route groups that don't appear in the URL. Layout files must be name
 typecheck failure when its generated types drifted for unrelated reasons) for no real
 benefit at this project's size. `useSegments()`/`router.push()` take plain strings — no
 `Href` casts needed anywhere.
+
+**Never put two dynamic segments as siblings in the same folder** (e.g. `watchlists/
+[watchlistId]/` and `watchlists/[symbol].tsx` both directly under `watchlists/`).
+expo-router doesn't error on this — it silently picks ONE of them for every matching
+URL. Confirmed live: with both present, `/watchlists/NVDA` matched `[watchlistId]/
+index` (treating "NVDA" as a watchlist id) instead of the intended `[symbol]` route,
+rendering a plain empty-watchlist screen with zero indication anything was wrong — no
+error, no warning, just the wrong screen. Fix: give one of them a static prefix
+segment so they stop competing (`watchlists/stock/[symbol].tsx`, not `watchlists/
+[symbol].tsx`). If a route ever needs to be reachable from two different tabs with
+each tab keeping its own correct back-stack (e.g. `screens/TradeScreen.tsx`, reached
+from both Watchlists and Account), duplicate a thin re-export file
+(`export { default } from "../../../screens/TradeScreen"`) in each tab's own folder
+rather than trying to share one URL across tabs — don't duplicate the actual
+component logic, just the route file.
 
 **Supabase client must never throw at import time.** `src/lib/supabase.ts` is imported
 by the root layout; `app.json`'s `web.output` is `"single"` (plain SPA, no SSR) because
@@ -459,17 +554,20 @@ needs all three, in order — see §12 for why GRANTs and RLS are both required.
 
 ## 10. Backend API
 
-**Dev-only, sandbox (account id in URL — remove before prod):**
 - `GET  /health`
-- `GET  /api/alpaca/accounts` — list accounts (connectivity test)
-- `POST /api/alpaca/test-account` — create a sandbox test account
-- `GET  /api/alpaca/accounts/:id`, `.../trading`, `.../positions` — status / cash / holdings
-- `POST /api/alpaca/accounts/:id/fund` — sandbox funding
-- `POST /api/alpaca/accounts/:id/orders` — buy/sell
-- `GET  /api/alpaca/quotes/:symbol`, `/api/alpaca/quotes?symbols=`, `/api/alpaca/snapshots?symbols=` —
-  market data (Alpaca Market Data API, separate host/auth from the Broker API — see
-  `alpaca-data.ts`); these three are NOT account-scoped and are still in active use by
-  the watchlist/trade screens.
+
+**Public, not account-scoped (`routes/alpaca.ts` — same data for every user, nothing
+to authenticate). The old dev-only account-scoped routes that used to live here
+(`/api/alpaca/accounts`, `/test-account`, `/accounts/:id/*`) were deleted 2026-08-11
+once real banking replaced the last thing that used them:**
+- `GET  /api/alpaca/quotes/:symbol` — best bid/ask + last trade + a `reliable` flag
+  (see §12's IEX-feed gotcha) for one symbol. Polled every 3s by the trade screen.
+- `GET  /api/alpaca/quotes?symbols=`, `/api/alpaca/snapshots?symbols=` — same, for
+  several symbols at once (market data, `alpaca-data.ts`).
+- `GET  /api/alpaca/assets/search?q=` — ticker/company-name autocomplete, ranked,
+  capped at 6 results. Empty `q` returns `[]`.
+- `GET  /api/alpaca/assets/:symbol` — exists-and-tradable check; 404 if not. The
+  authoritative gate before a symbol is ever added to a watchlist (`assetSearch.ts`).
 
 **Real, user-aware (account id ALWAYS derived from `req.user.id`, never from the client):**
 - `POST /api/me/onboard` — idempotent KYC submission. Pulls name/phone from `profiles`
@@ -489,6 +587,19 @@ needs all three, in order — see §12 for why GRANTs and RLS are both required.
 - `GET  /api/me/kyc-details` — address + DOB fetched live from Alpaca for the Profile
   screen. Returns ONLY those fields, never the raw Alpaca response (which contains
   `tax_id`).
+- `GET  /api/me/bank` — the one linked bank, masked to `{nickname, type, last4,
+  status}`. `{bank:null}` when nothing is linked. Never returns the full account
+  number or Alpaca's relationship id.
+- `POST /api/me/bank` — link a bank (routing + account number, ABA-checksum
+  validated). Owner name comes from `profiles`, never the client. 409 if one is
+  already linked.
+- `DELETE /api/me/bank` — unlink. The relationship id is looked up server-side.
+- `GET  /api/me/transfers` — history, newest first, with Alpaca's nine statuses
+  collapsed to `pending | complete | rejected | canceled` (raw status rides along).
+- `POST /api/me/transfers` — `{direction: "deposit"|"withdraw", amount}`. Translates
+  to Alpaca's INCOMING/OUTGOING; withdrawals are pre-checked against
+  `cash_withdrawable`.
+- `DELETE /api/me/transfers/:id` — cancel a transfer that hasn't reached clearing.
 
 Every mobile screen goes through `apiFetch()` (`lib/api.ts`), which attaches the
 Supabase session token; the backend derives the Alpaca account id from it.
@@ -510,10 +621,18 @@ file tree.
   OTP-code pattern. Sign-out is reachable from every stage of the flow, not just
   Settings.
 - **Main app:** Watchlists (Supabase-backed, RLS-scoped, multiple named lists),
-  Account (Holdings / Orders / Trade History, all session-derived), Research
-  (placeholder), Settings → Profile (read-only — name/phone/email from `profiles`,
-  questionnaire answers from `investor_profiles`, address/DOB fetched live from
-  Alpaca only when Profile is opened, never stored — see §9).
+  Account (Holdings / Orders / Trade History / Banking, all session-derived),
+  Research (placeholder), Settings → Profile (read-only — name/phone/email from
+  `profiles`, questionnaire answers from `investor_profiles`, address/DOB fetched
+  live from Alpaca only when Profile is opened, never stored — see §9).
+- **Banking (added 2026-08-11):** ACH deposits, withdrawals, and bank linking, all
+  through Alpaca. Verified end-to-end against the sandbox with a real Playwright
+  run: link a bank (bad routing numbers rejected by the ABA checksum before the
+  round trip), deposit → review → confirm, watch it land in the history, cancel a
+  still-pending transfer, get blocked trying to withdraw more than settled cash,
+  and remove the bank. Phase 1's dev-only `/api/alpaca/accounts/:id/*` routes
+  (including the old `/fund` scaffolding) were deleted at the same time — only the
+  market-data routes remain in `routes/alpaca.ts`.
 - **Infrastructure:** real Supabase project (`avhnfuffwevdcwapkmnh`), real Alpaca
   sandbox (fake money). Custom SMTP via Resend is wired up and `simplapp.us` is fully
   verified (sender `noreply@simplapp.us`) — real signups now deliver an actual emailed
@@ -522,15 +641,41 @@ file tree.
   - No way to delete an entire watchlist (only individual symbols).
   - `@tanstack/react-query` isn't wired in for watchlists yet — works today via plain
     `useState` + optimistic updates, but caching/refetch is manual.
-  - No stock search — adding a ticker is still manual-entry, no autocomplete.
   - The SUBMITTED→ACTIVE sandbox sync logic is proven correct (a
     deliberately-corrupted-status test confirmed it self-heals), but a real
     Alpaca-side approval landing on its own hasn't been directly observed yet.
+  - Banking has no wire transfers (deliberate — sandbox is ACH-only) and no Plaid
+    bank login yet (typed routing/account number only).
+  - A REJECTED/RETURNED transfer's styling has never been seen against real data —
+    Alpaca's sandbox `additional_information` status fixture is wire-only, so an
+    ACH transfer can't be forced to fail. The code path is written and the pill
+    colors exist; only Pending/Complete/Canceled have actually been observed.
+- **Stock search (added 2026-08-13):** adding a ticker now autocompletes by symbol
+  prefix OR company name (`GET /api/alpaca/assets/search?q=`), and anything actually
+  added is validated to exist and be tradable first (`GET /api/alpaca/assets/:symbol`
+  — 404 rejects it before it ever reaches Supabase). Backed by an in-memory cache of
+  Alpaca's ~13.3k tradable US-equity assets (`assetSearch.ts`), refreshed daily,
+  loaded lazily on first request rather than at boot (an eager fetch would add
+  multi-second delay to every `tsx watch` hot-reload in dev). OTC-exchange tickers
+  are filtered out of both search and validation — OTC skews toward thin/speculative
+  penny stocks, which cuts against §1's "people trying to stop day trading" audience;
+  revisit if a real use case needs one. Verified end-to-end via Playwright: prefix
+  search, company-name search, clicking a suggestion adds immediately (no extra
+  round trip — it's already a known-valid symbol from the cache), a duplicate
+  add is blocked with a message, and a garbage ticker like "BAAAAA" is rejected
+  with a clear error and never reaches the watchlist.
 
 **Immediate next steps:**
-1. Stock search (cache Alpaca's tradable-assets list; don't hit it per keystroke).
-2. Wire `@tanstack/react-query` into the watchlists hook.
-3. Real Research content, editing on the Profile screen, subscription paywall.
+1. Wire `@tanstack/react-query` into the watchlists hook.
+2. Real Research content, editing on the Profile screen, subscription paywall.
+3. Level 2 / order-book depth is deliberately NOT built — Alpaca's equities data is
+   top-of-book only at every tier (confirmed against their own docs), so a real
+   depth ladder isn't possible through this integration; anything resembling one
+   would be fabricated numbers styled as a live market. Revisit only if the app
+   subscribes to a direct exchange feed (e.g. Nasdaq TotalView) — a distinct,
+   separately-priced product, not a plan upgrade on the existing Market Data API.
+4. Banking follow-ons when they matter: Plaid bank login, wire transfers,
+   recurring/automatic deposits.
 
 ---
 
@@ -541,22 +686,37 @@ file tree.
 - **Account id from the session, never from the client.**
 - **NodeNext imports use `.js` extensions even for `.ts` files** (e.g.
   `import { x } from "./routes/alpaca.js"`). This is correct, not a bug.
-- **`API_BASE` differs by test target:**
-  - Expo web (browser) → `http://localhost:4000`
-  - Android emulator → `http://10.0.2.2:4000`
-  - Physical phone (Expo Go/dev build) → PC LAN IP, e.g. `http://192.168.1.18:4000`
-    (phone + PC on same Wi-Fi; backend already listens on 0.0.0.0)
-  - `localhost` NEVER works from a physical phone.
-- **A VPN on the dev machine can silently break physical-device testing** even when
-  Windows Firewall is configured correctly — many VPN clients (NordVPN included)
-  block or reroute LAN traffic while connected, which looks identical to a
-  firewall/network problem (Expo Go times out scanning the QR code) but isn't. Check
-  for an active VPN before deep-diving into firewall rules. Also: your dev machine's
-  LAN IP can change when a VPN disconnects (different adapter/subnet) — always
-  restart `npx expo start` after a network change so the QR code reflects the current
-  IP, and confirm the phone's own Wi-Fi IP is on the same subnet.
+- **`API_BASE` (`lib/api.ts`) derives itself now — it is NOT a hardcoded IP
+  anymore.** It used to be a literal string you had to hand-edit, and it went stale
+  silently three separate times (each looking exactly like "the backend is down"
+  when the backend was fine) because a hardcoded LAN IP breaks the instant the dev
+  machine's network changes. As of 2026-08-13 it's computed by `resolveApiBase()`:
+  web → `localhost`; simulator/emulator → `localhost`/`10.0.2.2`; physical device →
+  `Constants.expoConfig.hostUri`'s host, i.e. whatever address Expo/Metro actually
+  used to reach THIS device over the QR code. If that worked, port 4000 on the same
+  host works too — no more IP-hunting, and it self-heals across network changes on
+  every reload. A hardcoded fallback stays in the code for the edge case where
+  `hostUri` is ever unset (e.g. a standalone build with no dev server) — only touch
+  that line, and only if you actually land on it.
+  - `localhost` still NEVER works from a physical phone — that's exactly why the
+    derivation above exists instead of a fixed value.
+  - If a physical device still can't reach the backend after this: reload the app
+    (shake → Reload) so `API_BASE` recomputes, then check for an active VPN — many
+    clients (NordVPN included) block/reroute LAN traffic while connected, which
+    looks identical to a firewall problem (Expo Go times out scanning the QR code)
+    but isn't. A VPN disconnecting also changes the adapter/subnet, so restart
+    `npx expo start` afterward and confirm the phone's Wi-Fi IP is on the same
+    subnet as the PC's.
 - **CORS:** required for Expo web testing (browser cross-origin). Registered via
-  `@fastify/cors`. Native (phone/emulator) doesn't need it.
+  `@fastify/cors`. Native (phone/emulator) doesn't need it. **`methods` must be
+  listed explicitly** — `@fastify/cors` defaults `Access-Control-Allow-Methods` to
+  just `GET,HEAD,POST`, so a browser preflight rejects DELETE (and PATCH/PUT)
+  before it reaches any route. This is silent and confusing: the route is correct,
+  a direct `curl` works, and only the web build fails. It first bit when banking
+  added the app's first DELETE calls (remove bank, cancel transfer) — both did
+  nothing on Expo web while working fine everywhere else. Check
+  `curl -i -X OPTIONS <url> -H "Origin: http://localhost:8081" -H
+  "Access-Control-Request-Method: DELETE"` if a new verb ever "does nothing".
 - **Never bump individual `expo-*` / React Native packages by hand (e.g. `npm install
   expo-router@latest`) — always use `npx expo install <pkg>` (or bare `npx expo
   install` to resync everything), and run `npx expo-doctor` after any dependency
@@ -608,6 +768,17 @@ file tree.
   empty until the next open — this is expected, not a bug.
 - **Sandbox funding simulates ACH delay** (can take ~10–30 min to reflect); production
   ACH takes 1–3 business days — set that expectation in the UI.
+- **Sandbox deposits complete but stay unsettled**: a sandbox ACH deposit reaches
+  `COMPLETE` and raises `cash`, but `cash_withdrawable` stays `$0.00` until Alpaca's
+  own settlement clock advances. So "deposit then immediately withdraw" always fails
+  the settled-cash check in sandbox — that's correct behavior being correctly
+  enforced, not a bug in the withdrawal flow.
+- **A `<Tabs.Screen name=...>` must match the ACTUAL route name, or the tab silently
+  renders the raw route string as its label.** A tab folder with its own
+  `_layout.tsx` registers as the folder name (`settings`); a bare `index.tsx` with no
+  layout registers as `research/index`. The Research tab read literally
+  "research/index" in the tab bar for exactly this reason. No error, no warning — it
+  just prints the route.
 - **Alpaca tax_id validation** (sandbox): rejects area 000/666, rejects sequential
   numbers (123456789), rejects invalid characters. Use realistic-looking test SSNs.
 - **Closing an Alpaca account does NOT free its email for reuse.** "Delete" on a real
@@ -697,8 +868,36 @@ file tree.
 - **Sandbox quotes can have a $0 side** (e.g. ask price 0 with a populated bid) —
   simulated data, not always a full two-sided quote. Code that uses the quote (cost
   estimates, etc.) should treat a 0 price as "no data" rather than a real price.
+- **We're on the free IEX-only data feed, and its top-of-book tick is sometimes
+  wildly unrepresentative.** SIP (the consolidated tape) is a paid add-on — asking
+  for it returns `"subscription does not permit querying recent SIP data"` — so
+  quotes come from IEX alone, ~2-3% of consolidated volume. Observed live: MSFT
+  quoted bid $490.01 / ask $496.75 (a 1.4% spread) at the same instant its last
+  trade was $496.13, while SPY/AAPL/TSLA/NVDA/KO/GOOGL all sat under 0.2%. The
+  last-trade price stayed accurate throughout — it's only the quote that goes bad.
+  `alpaca-data.ts`'s `isReliableQuote()` therefore flags a quote as unreliable when
+  the spread exceeds 0.5% of the last trade (or a side is 0, or it's crossed), and
+  `getQuoteDetail()` returns `{...quote, lastPrice, reliable}`. The trade screen
+  shows Bid/Ask only when `reliable`, otherwise a single "Last Price" box plus a
+  one-line explanation — never a misleading spread.
+  - **Do NOT use quote condition code `"R"` as an odd-lot signal.** This feed
+    stamps `"R"` on *every* quote including obvious round lots (NVDA at 500x400,
+    KO at 500x700), so filtering on it flags 100% of quotes. This was tried and
+    reverted; the spread-vs-last-trade ratio is the signal that actually works.
+- **Alpaca has NO Level 2 / order-book depth for equities, at any tier.** Their
+  equities market data is top-of-book only — even paid SIP carries just the best
+  bid/ask per exchange plus the NBBO, not depth. Order-book depth exists in their
+  API for *crypto* only. Real equity depth needs a direct exchange feed (Nasdaq
+  TotalView etc.), a separate and expensive product. So a Level 2 panel cannot be
+  built from real data here — anything resembling one would be fabricated numbers
+  presented as a market, which is both misleading and squarely the day-trading
+  tooling §1/§2 rule out.
 - Rate limit: ~1,000 calls/min. Cache aggressively (react-query on the client, cached
   assets list, avoid redundant calls) to stay well under it and control data cost.
+  The trade screen polls its quote every **3 seconds** (`QUOTE_POLL_MS` in
+  `[symbol].tsx`), and each poll is 2 upstream calls (quote + last trade) — that's
+  ~40/min per open trade screen, comfortably within budget, but don't add more
+  pollers without re-checking the math.
 - Before production: confirm partner tier, pricing, cash-account default, market-data
   subscription tier, and tech-partner scope with Alpaca in writing.
 
