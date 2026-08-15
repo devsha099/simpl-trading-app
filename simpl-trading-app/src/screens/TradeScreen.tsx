@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
 import {
   ActivityIndicator,
   Pressable,
@@ -87,9 +87,16 @@ export default function TradeScreen() {
     }
   }, [symbol]);
 
-  useEffect(() => {
-    loadPosition();
-  }, [loadPosition]);
+  // Refetch on focus, not just on mount: React Navigation keeps stack
+  // screens mounted across tab switches, so backing out to another tab and
+  // switching back would otherwise show this exact position as it was
+  // before you left — not necessarily reflecting a trade placed elsewhere
+  // in the meantime.
+  useFocusEffect(
+    useCallback(() => {
+      loadPosition();
+    }, [loadPosition]),
+  );
 
   // Live best bid/ask, polled on an interval — not push/streaming, just a
   // plain GET, good enough for showing roughly what price you'd get filled at.

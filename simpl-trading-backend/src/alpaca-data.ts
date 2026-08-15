@@ -45,7 +45,6 @@ type RawQuote = {
 type RawTrade = { t: string; p: number; s: number };
 
 type LatestQuoteResponse = { symbol: string; quote: RawQuote };
-type LatestQuotesResponse = { quotes: Record<string, RawQuote> };
 type LatestTradeResponse = { symbol: string; trade: RawTrade };
 
 export type Quote = {
@@ -120,14 +119,6 @@ const toSnapshot = (symbol: string, raw: RawSnapshot): Snapshot => {
 };
 
 export const alpacaData = {
-  /** GET /v2/stocks/{symbol}/quotes/latest — current best bid/ask for one symbol. */
-  getLatestQuote: async (symbol: string): Promise<Quote> => {
-    const result = (await alpacaDataFetch(
-      `/v2/stocks/${encodeURIComponent(symbol)}/quotes/latest`,
-    )) as LatestQuoteResponse;
-    return toQuote(result.symbol, result.quote);
-  },
-
   /**
    * Quote + last trade together, with a reliability flag — what the
    * per-symbol trade screen actually polls. Fetches both in parallel since
@@ -145,20 +136,6 @@ export const alpacaData = {
       lastPrice,
       reliable: isReliableQuote(raw, lastPrice),
     };
-  },
-
-  /**
-   * GET /v2/stocks/quotes/latest?symbols=A,B — best bid/ask for many symbols in
-   * one call. Use this for list views (e.g. a watchlist) instead of one request
-   * per symbol.
-   */
-  getLatestQuotes: async (symbols: string[]): Promise<Record<string, Quote>> => {
-    const result = (await alpacaDataFetch(
-      `/v2/stocks/quotes/latest?symbols=${encodeURIComponent(symbols.join(","))}`,
-    )) as LatestQuotesResponse;
-    return Object.fromEntries(
-      Object.entries(result.quotes).map(([symbol, raw]) => [symbol, toQuote(symbol, raw)]),
-    );
   },
 
   /**

@@ -74,11 +74,23 @@ export function useWatchlists() {
   const addSymbol = useCallback((watchlistId: string, symbol: string) => {
     const clean = symbol.trim().toUpperCase();
     if (!clean) return;
+    // watchlist_items has no unique constraint on (watchlist_id, symbol),
+    // so skip the insert entirely for an already-present symbol — otherwise
+    // it'd write a literal duplicate row (a repeated ticker in the list,
+    // and a duplicate React key). Checked against the SAME state snapshot
+    // the update applies to, not a possibly-stale outer closure.
+    let alreadyPresent = false;
     setWatchlists((prev) =>
-      prev.map((w) =>
-        w.id === watchlistId && !w.symbols.includes(clean) ? { ...w, symbols: [...w.symbols, clean] } : w,
-      ),
+      prev.map((w) => {
+        if (w.id !== watchlistId) return w;
+        if (w.symbols.includes(clean)) {
+          alreadyPresent = true;
+          return w;
+        }
+        return { ...w, symbols: [...w.symbols, clean] };
+      }),
     );
+    if (alreadyPresent) return;
     supabase
       .from("watchlist_items")
       .insert({ watchlist_id: watchlistId, symbol: clean })

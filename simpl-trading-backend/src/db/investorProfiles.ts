@@ -13,17 +13,6 @@ export type InvestorProfileInput = {
   maritalStatus: string;
 };
 
-export async function getInvestorProfileForUser(userId: string) {
-  const { data, error } = await getSupabaseAdmin()
-    .from("investor_profiles")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data;
-}
-
 /** Written only after Alpaca accepts the same data — see routes/me/investmentProfile.ts. */
 export async function saveInvestorProfileForUser(userId: string, input: InvestorProfileInput): Promise<void> {
   const { error } = await getSupabaseAdmin()

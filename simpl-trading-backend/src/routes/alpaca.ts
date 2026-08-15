@@ -24,21 +24,6 @@ export async function alpacaRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
-   * Latest best bid/ask for several symbols in one call, e.g. a watchlist.
-   * ?symbols=AAPL,MSFT
-   */
-  app.get<{ Querystring: { symbols?: string } }>("/quotes", async (req, reply) => {
-    const symbols = (req.query.symbols ?? "")
-      .split(",")
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean);
-    if (symbols.length === 0) {
-      return reply.code(400).send({ error: "missing_symbols", message: "Provide ?symbols=A,B,C." });
-    }
-    return alpacaData.getLatestQuotes(symbols);
-  });
-
-  /**
    * Last traded price + %-change since previous close, for several symbols
    * in one call. ?symbols=AAPL,MSFT — used for watchlist rows.
    */
