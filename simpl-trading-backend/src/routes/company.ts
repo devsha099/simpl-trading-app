@@ -9,9 +9,17 @@ import { FinnhubError } from "../finnhub.js";
  * stock screen's Company Info and Financials tabs (CLAUDE.md §5); Alpaca
  * itself provides neither (§13), so this goes through Finnhub instead — see
  * finnhub.ts and companyData.ts.
+ *
+ * Rate-limited tighter than the global default (see index.ts): Finnhub's
+ * free tier is 60 calls/min for the ENTIRE app, and companyData.ts's 24h
+ * cache only helps for repeated symbols — a client walking distinct tickers
+ * misses the cache every time and would otherwise drain the whole quota
+ * unauthenticated. 30/min still covers any plausible human browsing.
  */
+const COMPANY_RATE_LIMIT = { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } };
+
 export async function companyRoutes(app: FastifyInstance): Promise<void> {
-  app.get<{ Params: { symbol: string } }>("/:symbol/profile", async (req, reply) => {
+  app.get<{ Params: { symbol: string } }>("/:symbol/profile", COMPANY_RATE_LIMIT, async (req, reply) => {
     try {
       const profile = await getCompanyProfile(req.params.symbol);
       if (!profile) {
@@ -29,7 +37,7 @@ export async function companyRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.get<{ Params: { symbol: string } }>("/:symbol/financials", async (req, reply) => {
+  app.get<{ Params: { symbol: string } }>("/:symbol/financials", COMPANY_RATE_LIMIT, async (req, reply) => {
     try {
       const financials = await getBasicFinancials(req.params.symbol);
       if (!financials) {

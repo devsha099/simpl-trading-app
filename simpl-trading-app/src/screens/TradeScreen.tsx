@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useFocusEffect } from "expo-router";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SelectField } from "../components/SelectField";
@@ -6,6 +6,13 @@ import { API_BASE, apiFetch } from "../lib/api";
 import { colors, fonts, labelCaps, radius } from "../lib/theme";
 
 const QUOTE_POLL_MS = 3000;
+
+// Idempotency key for a single intended order (CLAUDE.md §12's money-app
+// safety rule). Uniqueness only has to hold across one user's own orders —
+// Alpaca scopes client_order_id per account — so time + randomness is
+// plenty, and it avoids depending on crypto.randomUUID being present across
+// every Hermes/JSC version this app runs on.
+const newClientOrderId = () => `simpl-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 type Position = {
   symbol: string;
@@ -101,6 +108,12 @@ export default function TradeScreen({ symbol }: { symbol: string }) {
   const [limitPrice, setLimitPrice] = useState("");
   const [stopPrice, setStopPrice] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Held in a ref, NOT state, and deliberately not cleared on failure: if a
+  // submit fails (or the response is lost in flight), the next tap has to
+  // reuse the SAME id so Alpaca can recognize it as the same order and
+  // refuse to place a second one. Cleared only after an order is actually
+  // accepted, so the next genuinely-new order gets a fresh key.
+  const pendingOrderIdRef = useRef<string | null>(null);
 
   const loadPosition = useCallback(async () => {
     setError(null);
@@ -201,6 +214,9 @@ export default function TradeScreen({ symbol }: { symbol: string }) {
 
     setSubmitting(true);
     setError(null);
+    // Reused if this submit fails, so a retry is recognized as the same
+    // order rather than placing a second one (see pendingOrderIdRef).
+    pendingOrderIdRef.current ??= newClientOrderId();
     try {
       const body: Record<string, string | boolean> = {
         symbol,
@@ -210,6 +226,7 @@ export default function TradeScreen({ symbol }: { symbol: string }) {
         ...(orderType === "limit" ? { limit_price: limitPrice } : {}),
         ...(orderType === "stop" ? { stop_price: stopPrice } : {}),
         ...(orderType === "limit" && hours === "extended" ? { extended_hours: true } : {}),
+        client_order_id: pendingOrderIdRef.current,
       };
 
       const res = await apiFetch("/api/me/orders", {
@@ -219,6 +236,15 @@ export default function TradeScreen({ symbol }: { symbol: string }) {
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
+        // A duplicate rejection means the order DID go through on an earlier
+        // attempt whose response we lost — so clear the key and refresh
+        // rather than leaving the user staring at what looks like a failure.
+        if (res.status === 409) {
+          pendingOrderIdRef.current = null;
+          await loadPosition();
+          await loadAccount();
+          return;
+        }
         setError(
           data?.message ??
             (side === "sell"
@@ -227,6 +253,8 @@ export default function TradeScreen({ symbol }: { symbol: string }) {
         );
         return;
       }
+      // Accepted — the next order is a genuinely new one and needs its own key.
+      pendingOrderIdRef.current = null;
       // Re-fetches real position/account data from Alpaca — this is what
       // makes a sell "physically" show up here: nothing about the position
       // is ever computed or cached client-side, it's whatever

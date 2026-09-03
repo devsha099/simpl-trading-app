@@ -52,9 +52,6 @@ async function alpacaFetch(path: string, init: RequestInit = {}): Promise<unknow
 }
 
 export const alpaca = {
-  /** GET /v1/accounts — lists broker accounts. Empty [] on a fresh sandbox. */
-  listAccounts: () => alpacaFetch("/v1/accounts"),
-
   /**
    * GET /v1/assets — every active US-equity asset (~14k, ~13.3k tradable).
    * Not account-scoped; the caller (assetSearch.ts) caches this in memory

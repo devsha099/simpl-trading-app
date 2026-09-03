@@ -1,4 +1,6 @@
 import Fastify from "fastify";
+import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import { config } from "./config.js";
 import { alpacaRoutes } from "./routes/alpaca.js";
 import { meRoutes } from "./routes/me/onboarding.js";
@@ -13,7 +15,7 @@ import { AlpacaError } from "./alpaca.js";
 import { FinnhubError } from "./finnhub.js";
 
 const app = Fastify({ logger: true });
-import cors from "@fastify/cors";
+
 // `methods` must be listed explicitly: @fastify/cors defaults to only the
 // CORS-safelisted GET,HEAD,POST, so a browser preflight rejects DELETE
 // before it ever reaches a route (removing a bank / canceling a transfer
@@ -21,11 +23,88 @@ import cors from "@fastify/cors";
 // don't preflight, so this only ever bit the web build.
 app.register(cors, { origin: true, methods: ["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"] });
 
+/**
+ * Rate limiting. This is a real exposure, not just hygiene: /api/alpaca/*
+ * and /api/company/* are deliberately unauthenticated (same data for every
+ * user, nothing to protect), but they spend OUR third-party quota —
+ * Finnhub's free tier is 60 calls/min for the whole app, and Alpaca's is
+ * ~1,000/min. Without a limit, anyone who learns the backend's URL can
+ * exhaust either one and break those features for real users, with no
+ * account needed.
+ *
+ * Keyed on the authenticated user id when there is one, falling back to IP.
+ * Per-user is the more meaningful unit for /api/me/* (a stolen token can't
+ * spread its abuse across IPs), while IP is the only option for the public
+ * routes. NB: requireAuth runs as a route preHandler, i.e. AFTER this hook,
+ * so req.user is only populated on a retry within the same window — the IP
+ * fallback is what actually does the work for most first requests. That's
+ * fine; it's defense in depth, not an access-control mechanism.
+ *
+ * The global max is deliberately generous. The trade screen polls a quote
+ * every 3s (QUOTE_POLL_MS) = ~20 req/min per open screen, and a normal
+ * session has several screens fetching on focus, so anything tight enough
+ * to matter would break ordinary use.
+ */
+app.register(rateLimit, {
+  global: true,
+  max: 300,
+  timeWindow: "1 minute",
+  keyGenerator: (req) => req.user?.id ?? req.ip,
+  // /health is how a host/monitor checks liveness — throttling it would
+  // make the server look down under load, which is exactly backwards.
+  // The RevenueCat webhook is exempt because dropping those events costs a
+  // user their paid entitlement: RevenueCat retries a non-2xx, but a 429
+  // storm could exhaust its retry budget and silently lose an upgrade. It
+  // is already authenticated by a shared secret, and only RevenueCat's own
+  // servers know the URL.
+  allowList: (req) => req.url === "/health" || req.url.startsWith("/api/webhooks/"),
+  // statusCode is REQUIRED here. Whatever this returns is what the plugin
+  // throws, and a plain {error, message} object carries no status — so it
+  // fell through to the catch-all below and every rate-limited request came
+  // back as an opaque 500 "internal_error" instead of a 429. The limiter was
+  // working correctly the whole time; only the response was wrong. Found by
+  // firing 35 real requests and reading the status codes, which is the only
+  // reason it surfaced at all.
+  errorResponseBuilder: (_req, context) => ({
+    statusCode: 429,
+    error: "rate_limited",
+    message: `Too many requests. Try again in ${context.after}.`,
+  }),
+});
+
 // Health check — no Alpaca call, just proves the server is up.
 app.get("/health", async () => ({ status: "ok" }));
 
 // Turn Alpaca errors into clean JSON responses instead of 500s.
 app.setErrorHandler((error, _req, reply) => {
+  // Anything that already carries a 4xx (rate-limit 429s, Fastify's own
+  // body-parse and validation errors) is a deliberate, well-formed client
+  // response — pass it straight through. Without this, the catch-all at the
+  // bottom rewrites all of them to an opaque 500 "internal_error": the
+  // rate limiter was correctly blocking the 31st request and correctly
+  // building a 429 body, and this handler was throwing that away and
+  // reporting a server fault instead. Caught by actually firing 35 requests
+  // at it rather than trusting the config looked right.
+  const clientError = error as {
+    statusCode?: number;
+    code?: string;
+    error?: string;
+    message?: string;
+  };
+  if (
+    typeof clientError.statusCode === "number" &&
+    clientError.statusCode >= 400 &&
+    clientError.statusCode < 500
+  ) {
+    return reply.code(clientError.statusCode).send({
+      // `error` is what the rate limiter's own builder sets ("rate_limited");
+      // `code` is what Fastify's built-in client errors carry. Prefer the
+      // explicit one so a caller can branch on a stable machine-readable
+      // string either way.
+      error: clientError.error ?? clientError.code ?? "request_rejected",
+      message: clientError.message ?? "Request rejected.",
+    });
+  }
   if (error instanceof AlpacaError) {
     // Previously silent — these are "handled" (not a 500), but silently
     // returning Alpaca's rejection to the client with nothing in our own

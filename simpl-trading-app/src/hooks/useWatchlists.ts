@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useFocusEffect } from "expo-router";
 import { supabase } from "../lib/supabase";
 
 export type Watchlist = { id: string; name: string; symbols: string[] };
@@ -29,6 +30,10 @@ export function useWatchlists() {
     const { data, error } = await supabase
       .from("watchlists")
       .select("id, name, watchlist_items(symbol)")
+      // RLS already scopes this to the owner, so this filter is redundant
+      // for correctness — it's here as defense in depth, so a future policy
+      // edit can't silently turn this into "every user's watchlists".
+      .eq("user_id", userId)
       .order("created_at", { ascending: true });
 
     if (error || !data) {
@@ -47,9 +52,18 @@ export function useWatchlists() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Refetch on focus, not just on mount. Each screen that calls this hook
+  // gets its OWN independent copy of the state (unlike useAuthState, which
+  // is shared through a context), and React Navigation keeps stack screens
+  // mounted — so the watchlists list screen would otherwise keep showing
+  // the ticker count it loaded the first time. Repro before this fix:
+  // open a watchlist showing "3 tickers", go in, add a fourth, come back —
+  // still "3 tickers" until a full app reload.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   const createWatchlist = useCallback((name: string) => {
     const clean = name.trim();

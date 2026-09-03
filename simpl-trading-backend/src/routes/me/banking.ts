@@ -174,62 +174,72 @@ export async function bankingRoutes(app: FastifyInstance): Promise<void> {
    * rule; checking here just turns it into a clear message instead of a
    * raw rejection.
    */
-  app.post("/transfers", { preHandler: requireAuth }, async (req, reply) => {
-    const account = await getAccountForUser(req.user!.id);
-    if (!account) return reply.code(404).send({ error: "not_onboarded" });
+  app.post(
+    "/transfers",
+    {
+      preHandler: requireAuth,
+      // Tighter than the global default (index.ts) — this moves real money
+      // between a bank and a brokerage account. No human initiates 10
+      // transfers a minute.
+      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    },
+    async (req, reply) => {
+      const account = await getAccountForUser(req.user!.id);
+      if (!account) return reply.code(404).send({ error: "not_onboarded" });
 
-    const parsed = createTransferSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
-    }
-    const { direction, amount } = parsed.data;
+      const parsed = createTransferSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
+      }
+      const { direction, amount } = parsed.data;
 
-    const rel = await findLiveRelationship(account.alpacaAccountId);
-    if (!rel) {
-      return reply.code(400).send({
-        error: "no_bank_linked",
-        message: "Link a bank account before transferring money.",
-      });
-    }
-
-    if (direction === "withdraw") {
-      const trading = (await alpaca.getTradingAccount(account.alpacaAccountId)) as {
-        cash_withdrawable?: string;
-      };
-      const withdrawable = Number(trading.cash_withdrawable ?? 0);
-      if (Number(amount) > withdrawable) {
+      const rel = await findLiveRelationship(account.alpacaAccountId);
+      if (!rel) {
         return reply.code(400).send({
-          error: "insufficient_settled_cash",
-          message: `Only $${withdrawable.toFixed(2)} has settled and is available to withdraw. Sale proceeds settle the next business day (T+1).`,
+          error: "no_bank_linked",
+          message: "Link a bank account before transferring money.",
         });
       }
-    }
 
-    try {
-      const transfer = (await alpaca.createTransfer(account.alpacaAccountId, {
-        transfer_type: "ach",
-        relationship_id: rel.id,
-        amount,
-        direction: direction === "deposit" ? "INCOMING" : "OUTGOING",
-        timing: "immediate",
-      })) as AlpacaTransfer;
-      return reply.code(201).send(toTransferView(transfer));
-    } catch (err) {
-      // Surface Alpaca's own insufficient-funds rejection as the same clear
-      // message as the pre-check (covers races where settled cash moved
-      // between our check and Alpaca's).
-      if (err instanceof AlpacaError && direction === "withdraw") {
-        const bodyText = JSON.stringify(err.body).toLowerCase();
-        if (bodyText.includes("insufficient") || bodyText.includes("withdrawable")) {
+      if (direction === "withdraw") {
+        const trading = (await alpaca.getTradingAccount(account.alpacaAccountId)) as {
+          cash_withdrawable?: string;
+        };
+        const withdrawable = Number(trading.cash_withdrawable ?? 0);
+        if (Number(amount) > withdrawable) {
           return reply.code(400).send({
             error: "insufficient_settled_cash",
-            message: "That's more than your settled cash. Sale proceeds settle the next business day (T+1).",
+            message: `Only $${withdrawable.toFixed(2)} has settled and is available to withdraw. Sale proceeds settle the next business day (T+1).`,
           });
         }
       }
-      throw err;
-    }
-  });
+
+      try {
+        const transfer = (await alpaca.createTransfer(account.alpacaAccountId, {
+          transfer_type: "ach",
+          relationship_id: rel.id,
+          amount,
+          direction: direction === "deposit" ? "INCOMING" : "OUTGOING",
+          timing: "immediate",
+        })) as AlpacaTransfer;
+        return reply.code(201).send(toTransferView(transfer));
+      } catch (err) {
+        // Surface Alpaca's own insufficient-funds rejection as the same clear
+        // message as the pre-check (covers races where settled cash moved
+        // between our check and Alpaca's).
+        if (err instanceof AlpacaError && direction === "withdraw") {
+          const bodyText = JSON.stringify(err.body).toLowerCase();
+          if (bodyText.includes("insufficient") || bodyText.includes("withdrawable")) {
+            return reply.code(400).send({
+              error: "insufficient_settled_cash",
+              message: "That's more than your settled cash. Sale proceeds settle the next business day (T+1).",
+            });
+          }
+        }
+        throw err;
+      }
+    },
+  );
 
   /**
    * Cancel a transfer that hasn't reached clearing. The id names one of the

@@ -5,13 +5,14 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
-// Deliberately does NOT throw when unconfigured: this module is imported by
-// the root layout, and expo-router server-renders web on every request (see
-// app.json's "web.output": "static") — throwing here would crash that SSR
-// pass and take down the entire app, not just auth. Fall back to a
-// syntactically-valid placeholder so the client constructs fine; any actual
-// call against it fails at the network layer with a normal, catchable error,
-// the same way the rest of the app already handles "backend unreachable."
+// Deliberately does NOT throw when unconfigured. This module is imported by
+// the root layout, so anything thrown at import time takes down the entire
+// app rather than just auth. That was a live outage once, when app.json set
+// "web.output": "static" and expo-router server-rendered every web request —
+// the Node-side pass crashed on construction. It's "single" (plain SPA, no
+// SSR) now, but the fallback stays: a missing .env should degrade to a
+// catchable network error, the same way the rest of the app already handles
+// "backend unreachable", not a white screen.
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn(
     "Missing EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY — " +
