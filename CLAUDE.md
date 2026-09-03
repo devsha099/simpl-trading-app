@@ -242,7 +242,20 @@ instead of relying on this listener (see §12's `refresh()` gotcha).
 - Alpaca client: native `fetch` + **HTTP Basic auth** (key ID + secret, base64).
 - Installed: `@supabase/supabase-js` (verify session tokens, query DB — admin/service-role
   client, see `supabase.ts`), `zod` (request validation), `@fastify/cors`.
-- Still planned: `@fastify/rate-limit`.
+- `@fastify/rate-limit` added 2026-09-03 (see §10).
+- **Dependency security posture (audited 2026-09-03).** Backend: `npm audit` clean,
+  0 vulnerabilities, after patching a high-severity `fast-uri` SSRF and a moderate
+  `fastify` schema-validation bypass via a plain (non-`--force`) `npm audit fix`.
+  App: 31 advisories remain and are deliberately NOT patched — every one is a
+  transitive **build-time** dependency of Expo's own tooling (`postcss`,
+  `image-size`, `@xmldom/xmldom`, `decode-uri-component`, `uuid`, reached through
+  `@expo/config-plugins` / `@expo/prebuild-config` / `expo-splash-screen` /
+  `expo-dev-launcher`). They run in Metro/prebuild on the developer's machine and
+  are not in the shipped bundle, so they aren't attacker-reachable in a released
+  app. `npm audit fix --dry-run` confirms the only available "fix" pulls
+  `expo-dev-client`/`expo-splash-screen` up to SDK 56 canary builds — exactly the
+  cross-SDK-line break §12 warns about, which has already broken this project once.
+  Re-check when the project next moves an Expo SDK line; don't chase them before.
 
 **Mobile app** (`simpl-trading-app/`)
 - React Native via **Expo**, TypeScript, **expo-router** (file-based routing).
@@ -316,9 +329,12 @@ workspace/
 │   │   │   ├── onboarding.ts     zod schema for the KYC payload — state is a strict
 │   │   │   │                     enum, postalCode/taxId are format-checked, free-text
 │   │   │   │                     fields are length-bounded
-│   │   │   ├── investmentProfile.ts  zod schema for the questionnaire; employer name is
-│   │   │   │                     required only when employmentStatus is EMPLOYED
-│   │   │   └── orders.ts         zod schema for buys (dollars OR shares) — NOT built yet
+│   │   │   └── investmentProfile.ts  zod schema for the questionnaire; employer name is
+│   │   │                         required only when employmentStatus is EMPLOYED
+│   │   │                         (NB: schemas/orders.ts, routes/me/{orders,funding,
+│   │   │                         portfolio}.ts were empty 0-byte placeholders that were
+│   │   │                         never imported — deleted 2026-09-03. Order validation
+│   │   │                         lives inline in routes/me/trading.ts, not a zod schema.)
 │   │   └── routes/
 │   │       ├── me/
 │   │       │   ├── onboarding.ts     POST /api/me/onboard
@@ -527,7 +543,11 @@ workspace/
     │   ├── useWatchlists.ts      Supabase-backed, RLS-scoped to the logged-in user
     │   │                         (watchlists + watchlist_items). Optimistic local updates
     │   │                         so callers keep a fire-and-forget-feeling API;
-    │   │                         react-query still not wired in (§11 next steps)
+    │   │                         react-query still not wired in (§11 next steps).
+    │   │                         Loads on FOCUS, not just mount (fixed 2026-09-03):
+    │   │                         unlike useAuthState this is NOT shared via context, so
+    │   │                         each screen holds its own copy and the list screen's
+    │   │                         ticker count went stale after adding a symbol
     │   └── useEntitlement.ts     `{ isPremium, loading }` — reads public.subscriptions
     │                             directly via RLS (added 2026-09-02, see §15), same
     │                             "backend writes, client reads straight from Supabase"
@@ -739,7 +759,10 @@ once real banking replaced the last thing that used them:**
 - `POST /api/me/orders` — place an order (notional XOR qty, limit/stop need their
   price, sells checked against current holdings first — no short selling).
   `extended_hours: true` is accepted only when `type: "limit"` — 400s otherwise,
-  since Alpaca itself rejects that combination (see §6).
+  since Alpaca itself rejects that combination (see §6). Accepts an optional
+  `client_order_id` idempotency key (≤128 chars) — see §12's money-safety note;
+  a repeat of an id Alpaca already has comes back as `409 duplicate_order`
+  rather than placing a second real order. Rate-limited to 20/min.
 - `GET  /api/me/kyc-details` — address + DOB fetched live from Alpaca for the Profile
   screen. Returns ONLY those fields, never the raw Alpaca response (which contains
   `tax_id`).
@@ -761,6 +784,16 @@ once real banking replaced the last thing that used them:**
 - `POST /api/webhooks/revenuecat` — the only writer of `public.subscriptions`.
   Authenticated by a shared secret in the Authorization header, not a Supabase session.
   See §15.
+
+**Rate limiting (added 2026-09-03, `@fastify/rate-limit`, configured in `index.ts`).**
+Global 300/min keyed on IP (or user id when already resolved), with tighter caps
+where it matters: 30/min on `/api/company/*`, 20/min on `POST /api/me/orders`,
+10/min on `POST /api/me/transfers`. `/health` and `/api/webhooks/*` are exempt —
+throttling either causes worse failures than it prevents (a monitor seeing the
+server as down; RevenueCat burning its retry budget and silently dropping a paid
+entitlement). The 300 global is deliberately generous: the trade screen alone
+polls ~20/min per open screen. Verified live by firing 35 requests and reading the
+status codes — 30 through, 5 clean 429s.
 
 Every mobile screen goes through `apiFetch()` (`lib/api.ts`), which attaches the
 Supabase session token; the backend derives the Alpaca account id from it.
@@ -854,6 +887,25 @@ file tree.
   from the real account cash balance and the position's own `qty_available`. All
   three verified live via Playwright against the real dev servers (14 tab-bar
   checks + 8 trade-form checks, all passing) — not just typechecked.
+
+- **Refactor + security audit (2026-09-03).** Full pass over both codebases with no
+  feature changes. Added rate limiting (§10), implemented the client-order-id
+  idempotency key that had been documented but never built (§12), patched the
+  backend to 0 dependency vulnerabilities, deleted 4 empty never-imported files and
+  the unused `alpaca.listAccounts`, fixed the `useWatchlists` focus-staleness bug,
+  and corrected a stale comment in `lib/supabase.ts` that still described
+  `web.output: "static"` (it's `"single"` now).
+  Verified by two suites, both green, run against the live sandbox:
+  **55/55 API checks** (auth boundary on every `/api/me/*` route, forged-token
+  rejection, client-supplied-account-id injection ignored, no `tax_id` in
+  kyc-details, bank details masked, all order/transfer/bank validation paths,
+  SQL-injection and XSS payloads through asset search, malformed JSON) and
+  **47/47 UI checks** (signed-out routing guard, watchlists + autocomplete +
+  garbage-ticker rejection, the 3 stock panes with real Finnhub data, the whole
+  trade-form gating sequence, all Account sub-screens, banking both directions,
+  profile with no SSN leak, tab-bar hide/show rules, zero runtime console errors).
+  The suites live in the session scratchpad, NOT the repo — they hardcode the
+  Supabase service-role key and must never be committed.
 
 **Immediate next steps:**
 1. Wire `@tanstack/react-query` into the watchlists hook.
@@ -1010,10 +1062,49 @@ file tree.
   `admin.auth.admin.createUser()` bypass real email sending entirely (no rate-limit
   impact), which is why they're the right tool for scripted/automated auth-flow tests
   rather than real repeat signups.
-- **Money-app safety:** generate a unique client order id per buy so a network retry
-  can't place a duplicate order.
+- **Money-app safety: the client order id must be generated by the CLIENT and held
+  steady across retries** — implemented 2026-09-03 (this file had listed it as a
+  convention since the beginning, but no code actually did it). `TradeScreen.tsx`
+  holds it in a ref (`pendingOrderIdRef`), deliberately NOT state, and clears it
+  only once an order is accepted. That direction matters: a server-generated id
+  would be new on every request and would dedupe nothing. The case it defends
+  against is a lost response — the order really was placed, the user sees an
+  error, taps Buy again, and without a stable key that becomes two real orders.
+  A repeat id gets `409 duplicate_order`, which the client treats as success
+  (refresh position) rather than a failure.
+- **A global `setErrorHandler` will silently swallow every plugin's 4xx unless it
+  passes them through.** `index.ts`'s handler used to rewrite anything that wasn't
+  an AlpacaError/FinnhubError into a 500 `internal_error` — so when rate limiting
+  was added, the limiter correctly blocked the 31st request and correctly built a
+  429 body, and the client got an opaque 500. It now returns any error carrying a
+  4xx `statusCode` untouched. Related trap in the same fix: **`@fastify/rate-limit`'s
+  `errorResponseBuilder` must include `statusCode: 429` in its returned object** —
+  whatever it returns IS the thrown error, and a plain `{error, message}` carries no
+  status, so it falls through to the catch-all. Neither of these is visible from
+  reading the config; both only surfaced by firing real requests and reading status
+  codes.
+- **`page.goBack()` in a web Playwright test is a full browser navigation that
+  REMOUNTS the screen — it cannot reproduce React Navigation staleness bugs.** The
+  whole class of "screen kept mounted, so plain `useEffect` never refires" bugs
+  (the reason holdings/orders/trade-history/TradeScreen/useWatchlists all use
+  `useFocusEffect`) is invisible if the test navigates with browser back, because
+  the remount makes `useEffect` fire again and everything looks fine. Use the
+  in-app back control instead — on web React Navigation renders it as
+  `[aria-label="<PreviousScreen>, back"]`. Proven by A/B on the useWatchlists fix:
+  with the in-app link and plain `useEffect`, the list read "3 TICKERS" while the
+  DB held 4; with `useFocusEffect` it read 4. With `page.goBack()` BOTH versions
+  passed, i.e. the test was worthless. Also: an "add X" assertion proves nothing if
+  X is already present (the duplicate guard makes it a no-op) — clear the row via
+  the service-role client first so the insert is real.
 - **Dev environment:** Windows + PowerShell. Use `curl.exe` (not the `curl` alias) for
   API testing; quote JSON bodies with single quotes.
+- **`tsx watch` cannot rebind port 4000 if an old instance is still holding it** — it
+  logs `EADDRINUSE` and keeps serving the OLD code, so edits appear to have no
+  effect and you debug a fix that was never loaded. Orphans accumulate across
+  restarts (7 had piled up in one session). Check with
+  `Get-NetTCPConnection -LocalPort 4000`, and clear them all with
+  `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*simpl-trading-backend*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`
+  before assuming a code change didn't work.
 - **Supabase's "Confirm signup" and "Reset Password" email templates must be edited to
   show `{{ .Token }}`** before the OTP screens work with real email — dashboard:
   Authentication → Emails → Templates. Supabase always generates the OTP token
