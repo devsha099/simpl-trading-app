@@ -34,4 +34,21 @@ export const config = {
   // actually need a Supabase client.
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  // Company profile + fundamentals — Alpaca has neither at any tier (see
+  // CLAUDE.md §13), so the stock screen's Company Info/Financials tabs go
+  // through Finnhub instead (finnhub.ts). Not required() eagerly, same
+  // reasoning as Supabase above: the server should still boot without it,
+  // and /api/company/* fails clearly on its own rather than the whole
+  // server refusing to start over an optional data source.
+  finnhubApiKey: process.env.FINNHUB_API_KEY,
+  // RevenueCat webhook auth — the shared secret configured as the
+  // "Authorization header value" in the RevenueCat dashboard's webhook
+  // settings (CLAUDE.md §15). Not required() eagerly: the server should
+  // still boot without it; the webhook route itself replies 503 clearly if
+  // it's missing rather than the whole server refusing to start.
+  revenuecatWebhookSecret: process.env.REVENUECAT_WEBHOOK_SECRET,
+  // The RevenueCat entitlement identifier that means "premium" — configured
+  // in the RevenueCat dashboard, not something the backend invents. Defaults
+  // to "premium" so nothing breaks before it's explicitly set.
+  revenuecatEntitlementId: process.env.REVENUECAT_ENTITLEMENT_ID ?? "premium",
 };

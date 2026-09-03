@@ -1,6 +1,7 @@
 import type { Session } from "@supabase/supabase-js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE } from "../lib/api";
+import { configurePurchases, resetPurchases } from "../lib/purchases";
 import { supabase } from "../lib/supabase";
 
 export type AuthState =
@@ -50,9 +51,14 @@ export function useAuthState(): AuthState & { refresh: () => Promise<void> } {
   const evaluate = useCallback(async (session: Session | null | undefined) => {
     const userId = session?.user.id;
     if (!userId) {
+      resetPurchases();
       if (mountedRef.current) setState({ status: "signed-out" });
       return;
     }
+    // Identify RevenueCat as this user as soon as a session resolves — every
+    // status below this point still requires a real userId, so this is the
+    // one place that covers all of them (CLAUDE.md §15).
+    configurePurchases(userId);
 
     const { data, error } = await supabase
       .from("alpaca_accounts")

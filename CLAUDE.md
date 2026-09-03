@@ -134,8 +134,8 @@ instead of relying on this listener (see §12's `refresh()` gotcha).
     opens to a list of watchlists (blank except a "+ New Watchlist" action until you
     make one); tapping a watchlist opens its ticker list (add by typing, long-press/
     right-click a row for a "Remove from Watchlist" sheet); tapping a ticker pushes
-    into the per-symbol trade screen (bid/ask, order type, dollars/shares, Buy/Sell).
-    Ticker rows show last price + %-change since previous close.
+    into the per-symbol stock screen (see below). Ticker rows show last price +
+    %-change since previous close.
   - **Account** ← portfolio value + cash at the top, the nav title showing the
     account's real Alpaca-issued brokerage number ("#335725994 Cash Account"), then
     four sub-screens: **Holdings** (current positions + unrealized P/L, tap a row to
@@ -148,9 +148,25 @@ instead of relying on this listener (see §12's `refresh()` gotcha).
     transfer can be canceled from its row. Wire transfers are deliberately out of
     scope for now (Alpaca's sandbox is ACH-only; production supports outgoing wires
     only).
-  - **Research** ← placeholder ("coming soon")
+  - **Education** ← placeholder ("coming soon"). Formerly "Research" (renamed
+    2026-09-02) — stock financials/fundamentals are moving onto the stock's own page
+    instead (see below), freeing this tab for short financial-education videos,
+    uploaded later.
   - **Settings** ← **Profile** (read-only view of everything on file, see §9) and
     Sign Out. More settings TBD.
+- **The stock screen** (added 2026-09-02) ← reached from both a watchlist ticker row
+  and a Holdings row, one screen per symbol with a 3-way tab switcher at the top:
+  **Company Info**, **Trade**, **Financials**. **Trade** is the landing tab (buying/
+  holding is the core loop, §1) and is exactly the old full-screen trade experience
+  (bid/ask or last price, order type, dollars/shares, Buy/Sell, Your Position card),
+  just embedded instead of standalone. **Company Info** (symbol, exchange, industry,
+  market cap, shares outstanding, IPO date, website) and **Financials** (P/E, EPS,
+  dividend yield, profit margin, revenue/share, 52-week high/low, beta) are both new,
+  and both come from Finnhub, not Alpaca — Alpaca has no company metadata beyond
+  symbol/name/exchange and zero fundamentals data at any tier (§13). This is the
+  landing spot for what used to be the "Research" tab's planned content — see
+  Education above and §13's Finnhub section for the full reasoning, including the
+  explicit §1 brand-minimalism tension this was flagged against before building.
 
 ---
 
@@ -176,6 +192,20 @@ instead of relying on this listener (see §12's `refresh()` gotcha).
   call. Limit orders require a `limit_price`; Stop Loss orders require a `stop_price`.
   Revisit if the live bid/ask + order-type surface starts to feel like a trading
   terminal rather than a calm buy-and-hold app.
+- **Extended-hours trading (added 2026-09-02)** — a Regular Hours / Extended Hours
+  toggle on Limit orders only (Alpaca rejects `extended_hours` on anything but
+  Limit+day; the toggle is hidden entirely for Market/Stop Loss, and always resets
+  to Regular Hours when leaving Limit so it can't be silently still "on" if the user
+  switches back). Extends fills to 4:00 AM–8:00 PM ET instead of just the 9:30–4:00
+  session, and works with both dollar and share amounts (Alpaca lifted the old
+  whole-share-only restriction for extended-hours notional/fractional orders).
+  **Flagged, not just built**: this is arguably a stronger day-trading signal than
+  Limit/Stop Loss were — reacting to pre-market/after-hours moves is a core active-
+  trading behavior, in tension with §1's "people trying to stop day trading"
+  audience — but it was a specific, detailed founder instruction (exact hours, exact
+  toggle interaction), so treated as the same kind of brand-fit call as the order
+  types above rather than a stop-and-ask. Revisit if it starts to feel like the app
+  is coaching users to watch for after-hours catalysts.
 - **Banking is Alpaca ACH, one linked bank at a time.** Alpaca allows exactly ONE
   active ACH relationship per account (a second create returns 409), so the UI is
   "your linked bank" with a remove-then-add swap, never a list. Bank linking is
@@ -197,6 +227,9 @@ instead of relying on this listener (see §12's `refresh()` gotcha).
 - **Subscription (~$20–30/yr) via RevenueCat**, gates premium *app features* (IAP-required,
   Apple/Google take a cut) — NOT the trading itself (a real-world service, IAP-exempt).
   Mirror entitlement to Supabase via a RevenueCat webhook so the server knows who's premium.
+  Infrastructure built 2026-09-02 (SDK, webhook, `subscriptions` table — see §15); which
+  screens actually check it, and whether the paywall is custom-built or RevenueCat's
+  hosted UI, are still open — see §15's "still needed" list.
 - **Donations deprioritized** (awkward on mobile stores); subscription is the revenue pillar.
 
 ---
@@ -221,16 +254,24 @@ instead of relying on this listener (see §12's `refresh()` gotcha).
   `@react-native-picker/picker` (dropdowns — works cross-platform, renders as a native
   picker on iOS/Android and an HTML `<select>` on web), `expo-font` + `expo-asset`
   (custom fonts — `expo-asset` isn't automatically pulled in and must be installed
-  separately or `expo-font`'s web build fails to resolve it).
+  separately or `expo-font`'s web build fails to resolve it), `expo-dev-client` +
+  `react-native-purchases` (RevenueCat — added 2026-09-02, see §15; installing this
+  is what ends Expo Go compatibility for this project, §12).
 - Still planned: `@tanstack/react-query` (for the Supabase-backed watchlists — see
-  §11 next steps), `nativewind`.
-- Later: `react-native-purchases` (RevenueCat), Plaid.
+  §11 next steps), `nativewind`, `react-native-purchases-ui` (only if the hosted
+  Paywall UI is the chosen route over a custom screen — see §15).
+- Later: Plaid.
 
 **Data / services**
 - Supabase (Postgres + Auth + RLS), real project `avhnfuffwevdcwapkmnh`.
 - Alpaca Broker API (sandbox now, production later).
 - Resend (custom SMTP for Supabase auth emails — see §12). Sending domain
   `simplapp.us`, verification in progress.
+- Finnhub (added 2026-09-02) — company profile + fundamentals for the stock screen's
+  Company Info/Financials tabs, since Alpaca has neither (§13). Free tier only so far
+  (personal/non-commercial per Finnhub's terms); a paid Starter-or-above plan is
+  required before this is in front of real subscribers — confirm exact commercial
+  terms in writing first, same caution as Alpaca's partner tier.
 
 ---
 
@@ -251,12 +292,19 @@ workspace/
 │   │   │                         validation, backed by an in-memory cache of Alpaca's
 │   │   │                         ~13.3k tradable US-equity assets (lazy-loaded,
 │   │   │                         refreshed daily — see §11)
+│   │   ├── finnhub.ts            Finnhub REST client (company profile + fundamentals) —
+│   │   │                         isolated like alpaca-data.ts, same future-swap reasoning
+│   │   ├── companyData.ts        per-symbol cache in front of finnhub.ts (24h TTL, same
+│   │   │                         reasoning as assetSearch.ts); curates Finnhub's raw,
+│   │   │                         inconsistently-named fields into stable app-facing shapes
 │   │   ├── supabase.ts           admin Supabase client (service-role key, bypasses RLS);
 │   │   │                         lazily validated so the server still boots without it
 │   │   ├── auth.ts               preHandler: verify session token, attach req.user
 │   │   ├── db/
 │   │   │   ├── accounts.ts       look up / save / update a user's alpaca_account_id + status
-│   │   │   └── investorProfiles.ts  read/upsert the questionnaire row
+│   │   │   ├── investorProfiles.ts  read/upsert the questionnaire row
+│   │   │   └── subscriptions.ts  upsert the mirrored RevenueCat entitlement row — only
+│   │   │                         routes/webhooks/revenuecat.ts calls this (see §15)
 │   │   ├── data/
 │   │   │   ├── usStates.ts       USPS state/territory codes — backs the `state` enum in
 │   │   │   │                     schemas/onboarding.ts. Mirrored (not shared) in the app's
@@ -280,17 +328,33 @@ workspace/
 │   │       │   │                     first, saves locally only if that succeeded
 │   │       │   ├── trading.ts        GET account/positions/orders + POST orders, all
 │   │       │   │                     session-derived (no account id from the client)
-│   │       │   └── kycDetails.ts     GET /api/me/kyc-details — live address/DOB from Alpaca
-│   │       │                         for the Profile screen; never returns tax_id
-│   │       └── alpaca.ts         market-data routes (/quotes, /snapshots) still in use; its
-│   │                             account-scoped routes are now dead — delete before prod
+│   │       │   ├── kycDetails.ts     GET /api/me/kyc-details — live address/DOB from Alpaca
+│   │       │   │                     for the Profile screen; never returns tax_id
+│   │       │   └── banking.ts        /bank (GET/POST/DELETE) + /transfers
+│   │       │                         (GET/POST/DELETE :id) — see §10
+│   │       ├── alpaca.ts         market-data routes (/quotes, /snapshots) still in use; its
+│   │       │                     account-scoped routes are now dead — delete before prod
+│   │       ├── company.ts        /api/company/:symbol/profile + /financials — public,
+│   │       │                     non-account-scoped like alpaca.ts, backed by Finnhub
+│   │       │                     via companyData.ts (added 2026-09-02, see §13)
+│   │       └── webhooks/
+│   │           └── revenuecat.ts  POST /api/webhooks/revenuecat — the only writer of
+│   │                              public.subscriptions. Authenticated by a shared
+│   │                              secret in the Authorization header (RevenueCat's own
+│   │                              servers call this, not a logged-in user), not
+│   │                              Supabase auth. See §15.
 │   ├── supabase/migrations/
 │   │   ├── 0001_init.sql         profiles, alpaca_accounts, watchlists, watchlist_items,
 │   │   │                         user_settings — all tables + RLS policies
 │   │   ├── 0002_grants.sql       base table GRANTs the tables actually needed — RLS
 │   │   │                         policies alone left every query 403ing (see §12)
-│   │   └── 0003_investor_profiles.sql  the questionnaire table + RLS + GRANT together
-│   │                             in ONE file (0002's lesson). Applied.
+│   │   ├── 0003_investor_profiles.sql  the questionnaire table + RLS + GRANT together
+│   │   │                         in ONE file (0002's lesson). Applied.
+│   │   └── 0004_subscriptions.sql  the RevenueCat entitlement mirror table (added
+│   │                             2026-09-02, see §15) — same table+RLS+GRANT-together
+│   │                             shape as 0003. NOT YET applied to the real project —
+│   │                             apply it via the Supabase SQL editor before the
+│   │                             webhook route can actually write anything.
 │   ├── .env / .env.example       secrets (never commit .env)
 │   ├── package.json / tsconfig.json / README.md
 └── simpl-trading-app/
@@ -353,7 +417,10 @@ workspace/
     │   │                             instead of re-reading the DB's cached value. Same
     │   │                             "Not you? Sign out" link as onboarding.tsx
     │   └── (tabs)/               bottom tab bar:
-    │       ├── _layout.tsx           Tabs navigator: watchlists, account, research, settings
+    │       ├── _layout.tsx           Tabs navigator: watchlists, account, education, settings.
+    │       │                         Also hides the bottom tab bar entirely on any sub-route
+    │       │                         one level past a tab's own root (a stock, Holdings,
+    │       │                         Orders, Trade History, Banking, Profile) — see §12
     │       ├── watchlists/
     │       │   ├── _layout.tsx           Stack: index -> [watchlistId]/index -> stock/[symbol]
     │       │   ├── index.tsx             list of watchlists + "+ New Watchlist" (name prompt modal)
@@ -367,7 +434,7 @@ workspace/
     │       │   │                         anything not real/tradable with an inline error.
     │       │   │                         Rows (price + % change), long-press/right-click
     │       │   │                         row -> remove sheet
-    │       │   └── stock/[symbol].tsx    re-exports screens/TradeScreen.tsx (see below) —
+    │       │   └── stock/[symbol].tsx    re-exports screens/StockScreen.tsx (see below) —
     │       │                             lives under a static "stock/" segment, NOT
     │       │                             directly in watchlists/, because a bare
     │       │                             [symbol].tsx there would sit alongside
@@ -392,7 +459,7 @@ workspace/
     │       │   │                          also refetches on focus
     │       │   ├── trade-history.tsx      closed orders (?status=closed); also refetches
     │       │   │                          on focus
-    │       │   ├── [symbol].tsx           re-exports screens/TradeScreen.tsx — same trade
+    │       │   ├── [symbol].tsx           re-exports screens/StockScreen.tsx — same stock
     │       │   │                          screen as watchlists/stock/[symbol].tsx, reached
     │       │   │                          from tapping a Holdings row. No sibling dynamic
     │       │   │                          segment here (banking/ is a static name), so no
@@ -407,7 +474,7 @@ workspace/
     │       │       │                      Routes you to bank.tsx if nothing is linked
     │       │       └── bank.tsx           add (routing/account/type/nickname) or
     │       │                              remove the one linked bank
-    │       ├── research/index.tsx    placeholder ("coming soon")
+    │       ├── education/index.tsx   placeholder ("coming soon") — formerly research/
     │       └── settings/
     │           ├── _layout.tsx           Stack: index -> profile
     │           ├── index.tsx             Profile link + "Sign Out"
@@ -426,13 +493,19 @@ workspace/
     │   │                          the backend's data/financialProfile.ts — keep in sync
     │   ├── usStates.ts            USPS state/territory list for the KYC dropdown — mirrors
     │   │                          the backend's data/usStates.ts (see §8's backend tree)
-    │   └── supabase.ts            anon-key client (auth + watchlists/settings). Session
-    │                              storage uses AsyncStorage, not expo-secure-store. Never
-    │                              throws on missing config (would crash web SSR);
-    │                              degrades to a clean network-error message instead.
-    │                              `detectSessionInUrl: true` — needed on web so clicking
-    │                              an emailed confirmation/recovery link actually
-    │                              establishes a session (see §12)
+    │   ├── supabase.ts            anon-key client (auth + watchlists/settings). Session
+    │   │                          storage uses AsyncStorage, not expo-secure-store. Never
+    │   │                          throws on missing config (would crash web SSR);
+    │   │                          degrades to a clean network-error message instead.
+    │   │                          `detectSessionInUrl: true` — needed on web so clicking
+    │   │                          an emailed confirmation/recovery link actually
+    │   │                          establishes a session (see §12)
+    │   └── purchases.ts           configurePurchases()/resetPurchases() — RevenueCat SDK
+    │                              setup (added 2026-09-02, see §15). Configures with the
+    │                              Supabase user id as RevenueCat's own app_user_id, called
+    │                              from useAuthState.ts whenever a session resolves. Never
+    │                              throws on a missing API key, same philosophy as
+    │                              supabase.ts's placeholder fallback above
     ├── src/context/
     │   └── AuthStateContext.tsx   wraps the ONE useAuthState() instance the root layout
     │                              routes on, so onboarding.tsx/pending.tsx can call
@@ -451,8 +524,16 @@ workspace/
     │   │                         Ignores the `PASSWORD_RECOVERY` auth event specifically —
     │   │                         reset-password.tsx owns that moment until a new password
     │   │                         is actually set (see §12)
-    │   └── useWatchlists.ts      Supabase-backed, RLS-scoped to the logged-in user
-    │                             (watchlists + watchlist_items). Optimistic local updates
+    │   ├── useWatchlists.ts      Supabase-backed, RLS-scoped to the logged-in user
+    │   │                         (watchlists + watchlist_items). Optimistic local updates
+    │   │                         so callers keep a fire-and-forget-feeling API;
+    │   │                         react-query still not wired in (§11 next steps)
+    │   └── useEntitlement.ts     `{ isPremium, loading }` — reads public.subscriptions
+    │                             directly via RLS (added 2026-09-02, see §15), same
+    │                             "backend writes, client reads straight from Supabase"
+    │                             pattern as alpaca_accounts. Refetches on focus. Not yet
+    │                             used anywhere — nothing in the app actually gates on
+    │                             this yet, see §15's "still needed" list
     │                             so callers keep a fire-and-forget-feeling API;
     │                             react-query still not wired in (§11 next steps)
     ├── src/components/            small reusable UI pieces (not full screens — see
@@ -467,17 +548,46 @@ workspace/
     ├── src/screens/                full screen components shared across multiple routes
     │   │                           (route files re-export these — see expo-router's
     │   │                           "same screen, multiple paths" pattern, §12)
-    │   └── TradeScreen.tsx       bid/ask (or last price), order form, Buy/Sell, and — when
-    │                             the symbol is held — a "Your Position" card (shares
-    │                             owned, shares actually available to sell vs. tied up in
-    │                             another pending order, market value, avg cost, $ + %
-    │                             unrealized P&L). Every number there is Alpaca's own
-    │                             position data via GET /api/me/positions, re-fetched
-    │                             after every order — nothing is computed or cached
-    │                             client-side. Re-exported by both
-    │                             watchlists/stock/[symbol].tsx and account/[symbol].tsx
-    │                             so each stays in its own tab's back-stack (added
-    │                             2026-08-14 when Holdings rows became tappable)
+    │   ├── StockScreen.tsx       the per-symbol screen (added 2026-09-02) — owns the route
+    │   │                         param, screen title, and single SafeAreaView; renders a
+    │   │                         3-way tab switcher (Company Info / Trade / Financials,
+    │   │                         default Trade) and the matching pane below it, wrapped in a
+    │   │                         KeyboardAvoidingView (iOS "padding" behavior; Android relies
+    │   │                         on Expo's default window-resize) so the Amount keyboard
+    │   │                         doesn't cover the field being typed into. Re-exported by
+    │   │                         both watchlists/stock/[symbol].tsx and account/[symbol].tsx
+    │   │                         so each stays in its own tab's back-stack (this re-export
+    │   │                         pair used to point at TradeScreen.tsx directly, before it
+    │   │                         became one of three panes)
+    │   ├── TradeScreen.tsx       the Trade pane — bid/ask (or last price), an order form, and
+    │   │                         — when the symbol is held — a "Your Position" card (shares
+    │   │                         owned, shares actually available to sell vs. tied up in
+    │   │                         another pending order, market value, avg cost, $ + %
+    │   │                         unrealized P&L). Every number there is Alpaca's own position
+    │   │                         data via GET /api/me/positions, re-fetched after every order
+    │   │                         — nothing is computed or cached client-side. Takes `symbol`
+    │   │                         as a prop, not a route param — it's StockScreen's child, not
+    │   │                         a route target itself. Order form redesigned 2026-09-02:
+    │   │                         Side/Order Type/Trading Hours are dropdowns (SelectField,
+    │   │                         same component the questionnaire/banking screens use) that
+    │   │                         all start unselected; a single Buy/Sell action button
+    │   │                         (vibrant green/red — colors.buyGreen/sellRed in theme.ts,
+    │   │                         deliberately more saturated than the muted phosphor/rust
+    │   │                         used for P&L semantics) only appears once Side has a value
+    │   │                         and only becomes tappable once every currently-visible
+    │   │                         dropdown does. Amount starts empty (no prefilled 20/0.2)
+    │   │                         with a caption underneath driven by real account/position
+    │   │                         data — "Amount left to invest: $X" (buy) or "Max quantity
+    │   │                         allowed" / "Max amount you can sell" (sell, from the
+    │   │                         position's own qty_available)
+    │   ├── CompanyInfoPane.tsx   the Company Info pane — symbol, exchange, industry, market
+    │   │                         cap, shares outstanding, IPO date, website. GET
+    │   │                         /api/company/:symbol/profile (Finnhub — see §13)
+    │   └── FinancialsPane.tsx    the Financials pane — P/E, EPS, dividend yield, profit
+    │                             margin, revenue/share, 52-week high/low, beta. GET
+    │                             /api/company/:symbol/financials (Finnhub — see §13).
+    │                             Deliberately a curated handful of figures, not a dense
+    │                             fundamentals dashboard — see the pane's own header comment
     ├── app.json / package.json / tsconfig.json
 ```
 
@@ -500,11 +610,42 @@ rendering a plain empty-watchlist screen with zero indication anything was wrong
 error, no warning, just the wrong screen. Fix: give one of them a static prefix
 segment so they stop competing (`watchlists/stock/[symbol].tsx`, not `watchlists/
 [symbol].tsx`). If a route ever needs to be reachable from two different tabs with
-each tab keeping its own correct back-stack (e.g. `screens/TradeScreen.tsx`, reached
+each tab keeping its own correct back-stack (e.g. `screens/StockScreen.tsx`, reached
 from both Watchlists and Account), duplicate a thin re-export file
-(`export { default } from "../../../screens/TradeScreen"`) in each tab's own folder
+(`export { default } from "../../../screens/StockScreen"`) in each tab's own folder
 rather than trying to share one URL across tabs — don't duplicate the actual
 component logic, just the route file.
+
+**Hiding the bottom tab bar on a sub-route (added 2026-09-02, `(tabs)/_layout.tsx`)**
+uses `getFocusedRouteNameFromRoute` (from `@react-navigation/native` — a transitive
+dep of expo-router, re-exported from `@react-navigation/core`, and directly
+importable even though it's not in expo-router's own public API) inside the `<Tabs>`
+component's `screenOptions` function, keyed off each tab's OWN nested-Stack route
+names (the literal `Stack.Screen name=` values in that tab's `_layout.tsx` — e.g.
+`"stock/[symbol]"`, `"holdings"`, `"[symbol]"`, `"profile"`). Setting
+`tabBarStyle: {display:"none"}` this way removes the bar entirely rather than fading
+it — there's nothing left to tap, so the only way back to it is pressing back and
+popping the screen off that tab's stack. That's the actual point: it's what
+guarantees the same stock/Holdings/Profile screen can never end up pushed and left
+open in two tabs' stacks at once, since you always have to fully back out of a
+sub-route before a different tab is reachable again. Centralizing this in one
+`screenOptions` function (rather than a `useFocusEffect` + `navigation.getParent()`
+call in every sub-screen) was deliberate: expo-router's `<Tabs>` explicitly types
+`id` as `undefined`-only, so the usual React-Navigation `getParent(id)` pattern for
+reaching an ancestor navigator from deep inside a nested stack isn't available here.
+- **A `display:"none"` element still counts in a Playwright `.count()`/`getByText()`
+  check** — it's hidden, not removed from the DOM, so a tab-bar-visibility test that
+  only checks element count instead of `.isVisible()` will report the bar as
+  "present" even when it's genuinely invisible on screen. Same family of mistake as
+  the stale-mounted-input lesson elsewhere in this file: check actual visibility,
+  not just DOM presence.
+- **React Native Web's `Pressable` has no real `disabled` DOM property to check
+  either** — it renders as a plain `<div>` (no `role="button"`, no `<button>` tag)
+  and signals disabled state via `aria-disabled="true"` on an ancestor div, which is
+  *absent* (not `"false"`) when enabled. A test that does `el.disabled === true` or
+  `getAttribute("aria-disabled") === "false"` will silently get `null` either way —
+  walk up for `aria-disabled !== null` for the disabled case, and treat "attribute
+  missing" as enabled (`!== "true"`), not as an equality check against `"false"`.
 
 **Supabase client must never throw at import time.** `src/lib/supabase.ts` is imported
 by the root layout; `app.json`'s `web.output` is `"single"` (plain SPA, no SSR) because
@@ -539,6 +680,11 @@ Supabase provides `auth.users` automatically. Around it:
   backend's service-role key writes, since the row must stay in sync with what was
   actually PATCHed to Alpaca. Not a §2 exception: SSN still never touches our DB. This
   is descriptive financial data, not identity documents.
+- **subscriptions** — user_id, revenuecat_app_user_id, entitlement, status ('active' |
+  'expired'), product_id, expires_at, updated_at. The RevenueCat entitlement mirror
+  (added 2026-09-02, not yet applied — see §15). Same RLS shape as `alpaca_accounts`:
+  owner can read, only the backend's RevenueCat webhook (service-role key) writes it —
+  a client that could write its own row could grant itself premium for free.
 
 Every table has RLS enabled. There is NO table for KYC PII (address, DOB, SSN) or
 holdings — PII is passed through to Alpaca and discarded; holdings live at Alpaca and
@@ -548,7 +694,10 @@ which never returns `tax_id`.
 
 Migrations `0001_init.sql`, `0002_grants.sql`, `0003_investor_profiles.sql` have all
 been applied, in order, to the real project (`avhnfuffwevdcwapkmnh`). A fresh project
-needs all three, in order — see §12 for why GRANTs and RLS are both required.
+needs all four (including `0004_subscriptions.sql`), in order — see §12 for why GRANTs
+and RLS are both required. **`0004_subscriptions.sql` has NOT been applied yet** — it
+exists in the repo but needs to be run via the Supabase SQL editor before the
+RevenueCat webhook can write anything real (see §15).
 
 ---
 
@@ -568,6 +717,11 @@ once real banking replaced the last thing that used them:**
   capped at 6 results. Empty `q` returns `[]`.
 - `GET  /api/alpaca/assets/:symbol` — exists-and-tradable check; 404 if not. The
   authoritative gate before a symbol is ever added to a watchlist (`assetSearch.ts`).
+- `GET  /api/company/:symbol/profile` — company info for the stock screen's Company
+  Info tab (`companyData.ts`, Finnhub-backed). 404 if Finnhub has no profile for the
+  symbol; 503 if `FINNHUB_API_KEY` isn't set.
+- `GET  /api/company/:symbol/financials` — curated fundamentals for the Financials
+  tab (same backing). Same 404/503 shape.
 
 **Real, user-aware (account id ALWAYS derived from `req.user.id`, never from the client):**
 - `POST /api/me/onboard` — idempotent KYC submission. Pulls name/phone from `profiles`
@@ -584,6 +738,8 @@ once real banking replaced the last thing that used them:**
   Trade History.
 - `POST /api/me/orders` — place an order (notional XOR qty, limit/stop need their
   price, sells checked against current holdings first — no short selling).
+  `extended_hours: true` is accepted only when `type: "limit"` — 400s otherwise,
+  since Alpaca itself rejects that combination (see §6).
 - `GET  /api/me/kyc-details` — address + DOB fetched live from Alpaca for the Profile
   screen. Returns ONLY those fields, never the raw Alpaca response (which contains
   `tax_id`).
@@ -600,6 +756,11 @@ once real banking replaced the last thing that used them:**
   to Alpaca's INCOMING/OUTGOING; withdrawals are pre-checked against
   `cash_withdrawable`.
 - `DELETE /api/me/transfers/:id` — cancel a transfer that hasn't reached clearing.
+
+**Server-to-server, not client-facing (RevenueCat's own servers call this, never the app):**
+- `POST /api/webhooks/revenuecat` — the only writer of `public.subscriptions`.
+  Authenticated by a shared secret in the Authorization header, not a Supabase session.
+  See §15.
 
 Every mobile screen goes through `apiFetch()` (`lib/api.ts`), which attaches the
 Supabase session token; the backend derives the Alpaca account id from it.
@@ -622,7 +783,7 @@ file tree.
   Settings.
 - **Main app:** Watchlists (Supabase-backed, RLS-scoped, multiple named lists),
   Account (Holdings / Orders / Trade History / Banking, all session-derived),
-  Research (placeholder), Settings → Profile (read-only — name/phone/email from
+  Education (placeholder), Settings → Profile (read-only — name/phone/email from
   `profiles`, questionnaire answers from `investor_profiles`, address/DOB fetched
   live from Alpaca only when Profile is opened, never stored — see §9).
 - **Banking (added 2026-08-11):** ACH deposits, withdrawals, and bank linking, all
@@ -650,6 +811,15 @@ file tree.
     Alpaca's sandbox `additional_information` status fixture is wire-only, so an
     ACH transfer can't be forced to fail. The code path is written and the pill
     colors exist; only Pending/Complete/Canceled have actually been observed.
+  - The Company Info/Financials tabs (§14) are built, typecheck, and are now
+    verified live against a real Finnhub key: both the "not configured" 503 path
+    and a real AAPL response were confirmed via curl (name, exchange, industry,
+    market cap ~$4.75T, EPS $8.72, P/E 34.36, profit margin 27.6% — all internally
+    consistent) and an unknown symbol 404s cleanly. Not yet checked: the actual
+    `CompanyInfoPane`/`FinancialsPane` screens rendering this in the app (only the
+    backend routes have been hit directly so far), and Finnhub's free-tier rate
+    limit (60 calls/min) hasn't been stress-tested — fine for one developer
+    clicking around, revisit before any real traffic.
 - **Stock search (added 2026-08-13):** adding a ticker now autocompletes by symbol
   prefix OR company name (`GET /api/alpaca/assets/search?q=`), and anything actually
   added is validated to exist and be tradable first (`GET /api/alpaca/assets/:symbol`
@@ -664,10 +834,31 @@ file tree.
   round trip — it's already a known-valid symbol from the cache), a duplicate
   add is blocked with a message, and a garbage ticker like "BAAAAA" is rejected
   with a clear error and never reaches the watchlist.
+- **Stock screen restructure + Education rename (added 2026-09-02):** the old
+  standalone trade screen is now one of three tabs (Company Info / Trade /
+  Financials — §5, §14) on a shared `StockScreen.tsx`; the former "Research"
+  placeholder tab is renamed "Education", freed up for financial-education videos
+  to be uploaded later. Also added: a standing "quotes reflect one exchange only"
+  disclaimer on the Trade tab (§13), always shown regardless of the existing
+  `reliable` flag.
+- **Three UI fixes, same day (2026-09-02):** (1) `StockScreen.tsx` wraps its
+  content in a `KeyboardAvoidingView` so the on-screen keyboard no longer covers
+  the Amount field on iOS. (2) The bottom tab bar now hides entirely on any
+  sub-route one level past a tab's own root (stock screens, Holdings, Orders,
+  Trade History, Banking, Profile) — the only way back is pressing back, which is
+  what guarantees the same sub-route can't end up pushed open in two tabs' stacks
+  at once (§12). (3) The Trade tab's order form is dropdown-driven now — Side /
+  Order Type / Trading Hours (`SelectField`, all starting unselected) gate a
+  single vibrant green/red Buy-or-Sell action button; Amount starts empty with a
+  live "Amount left to invest" / "Max quantity allowed" caption underneath, sourced
+  from the real account cash balance and the position's own `qty_available`. All
+  three verified live via Playwright against the real dev servers (14 tab-bar
+  checks + 8 trade-form checks, all passing) — not just typechecked.
 
 **Immediate next steps:**
 1. Wire `@tanstack/react-query` into the watchlists hook.
-2. Real Research content, editing on the Profile screen, subscription paywall.
+2. Real Education content (video lessons), editing on the Profile screen, subscription
+   paywall.
 3. Level 2 / order-book depth is deliberately NOT built — Alpaca's equities data is
    top-of-book only at every tier (confirmed against their own docs), so a real
    depth ladder isn't possible through this integration; anything resembling one
@@ -740,6 +931,20 @@ file tree.
   npm's `latest` tag may be several SDKs ahead of what Expo Go actually ships — match
   the exact SDK number the error message states, not just "latest"), not downgrading
   the phone's app.
+- **Expo Go can no longer run this app, as of `react-native-purchases` being added
+  2026-09-02.** That's not a bug to fix — RevenueCat's SDK has real native iOS/Android
+  code that Expo Go doesn't ship, so any screen touching it (directly or via
+  `useAuthState.ts`, which now calls `configurePurchases()` on every session) needs a
+  custom dev client instead. One-time setup: `npx expo install expo-dev-client` (already
+  done) and either `eas build --profile development --platform ios|android` (needs an
+  Expo/EAS account) or `npx expo run:ios` / `npx expo run:android` for a local native
+  build. From then on, run that dev client instead of Expo Go — `npx expo start` still
+  works the same way to serve JS to it. The web preview (`w` in the terminal) still
+  launches fine since Metro doesn't need the native module to bundle, but purchases
+  themselves won't work there (RevenueCat's web support is a separate Stripe-backed
+  product, "RevenueCat Billing," not this SDK) — same "web is a logic preview, not
+  accurate for everything" caveat as always (§16), just now extended to an entire
+  feature category, not just visual fidelity.
 - **Most current Google Fonts are shipped as variable-only TTFs (no static weight
   cuts), and React Native's Text component can't select a variable font's weight axis
   the way CSS `font-weight` can** — loading one directly gets you stuck at whatever
@@ -879,7 +1084,15 @@ file tree.
   the spread exceeds 0.5% of the last trade (or a side is 0, or it's crossed), and
   `getQuoteDetail()` returns `{...quote, lastPrice, reliable}`. The trade screen
   shows Bid/Ask only when `reliable`, otherwise a single "Last Price" box plus a
-  one-line explanation — never a misleading spread.
+  one-line explanation — never a misleading spread. A separate, standing disclaimer
+  ("Quotes reflect one exchange only — your fill price may differ.", added
+  2026-09-02) always renders below the price box regardless of `reliable` — the
+  thin-quote note above covers the specific unreliable-spread case, this one covers
+  the general fact that even a normal-looking quote is IEX-only, not the full
+  consolidated market. Execution itself is unaffected: Alpaca is bound by
+  Regulation NMS's best-execution rule to fill at or better than the true
+  cross-exchange NBBO regardless of what data tier the display quote came from —
+  the disclaimer is about what's shown, not about fill quality.
   - **Do NOT use quote condition code `"R"` as an odd-lot signal.** This feed
     stamps `"R"` on *every* quote including obvious round lots (NVDA at 500x400,
     KO at 500x700), so filtering on it flags 100% of quotes. This was tried and
@@ -903,7 +1116,104 @@ file tree.
 
 ---
 
-## 14. How to work in this repo
+## 14. Finnhub specifics
+
+Company profile + fundamentals for the stock screen's Company Info/Financials tabs
+(added 2026-09-02). Picked over Financial Modeling Prep specifically because FMP's
+free/individual tiers explicitly disallow displaying their data to an app's own end
+users without a separate Data Display & Licensing Agreement — exactly what this
+feature does — while Finnhub's structure is simpler: a personal/non-commercial free
+tier to build and test against, then a self-serve Starter paid tier (~$50/mo as of
+this research) for real commercial use, no sales negotiation required to get started.
+
+- Base URL `https://finnhub.io/api/v1`. Auth is a `token=` query param (`FINNHUB_API_KEY`
+  in `.env`), not a header — different style from both Alpaca APIs. See `finnhub.ts`.
+- `GET /stock/profile2?symbol=` → company profile (name, exchange, industry, IPO date,
+  market cap, shares outstanding, website, country, currency). **Returns `{}` with a
+  200, not a 404, for a symbol it has no profile for** — `companyData.ts` treats a
+  missing `name` as the real "not found" signal, not the HTTP status.
+- `GET /stock/metric?symbol=&metric=all` → a large (100+ field) fundamentals object
+  under `metric`. Field naming is inconsistent across TTM/Annual/Quarterly variants
+  and has shifted before (see `finnhubio/Finnhub-API` issue #337) — `companyData.ts`
+  reads a curated handful defensively (a couple of known key-name variants per field,
+  each falling back to `null`/"—" rather than guessing) instead of passing the raw
+  blob through. This is also a brand call, not just a data-hygiene one: showing all
+  100+ fields would be a fundamentals-flavored version of the "dozens of metrics" §1
+  explicitly rules out.
+- `marketCapitalization` and `shareOutstanding` are both in **millions**, not billions
+  or raw units (confirmed via Finnhub's own example: Delta Air Lines' `21794.52` ==
+  $21.79B). `CompanyInfoPane.tsx` divides by 1000 for the billions display threshold.
+- **Free tier is personal/non-commercial use only per Finnhub's terms; a paid plan is
+  required once real (paying) users see this data** — same "confirm in writing before
+  production" posture already applied to Alpaca's partner tier (§13). Everything
+  shipped 2026-09-02 was built and tested against a free-tier key only.
+- Both `/api/company/:symbol/*` routes 503 with `{error: "company_data_unavailable"}`
+  when `FINNHUB_API_KEY` is unset, rather than 500ing — confirmed live. The app's
+  panes render this as a plain "no data available yet" message, not an error state.
+- **Field names confirmed live against a real key (2026-09-02, AAPL)**: `profile2`
+  and `metric?metric=all` both matched `companyData.ts`'s guessed field names
+  exactly on the first try — `marketCapitalization`/`shareOutstanding` in millions
+  confirmed (AAPL: `4745005.73` == $4.75T, `14687.36` == ~14.69B shares), and every
+  curated `metric` key (`peBasicExclExtraTTM`, `epsBasicExclExtraItemsTTM`,
+  `dividendYieldIndicatedAnnual`, `52WeekHigh`/`Low`, `beta`, `netProfitMarginTTM`,
+  `revenuePerShareTTM`) returned a real, plausible number. Re-verify if Finnhub ever
+  changes these field names (see the issue #337 note above) — nothing here is
+  fabricated, but it also isn't contractually guaranteed to stay named this way.
+- `companyData.ts` caches each symbol's profile/financials for 24h (mirrors
+  `assetSearch.ts`'s reasoning: this data changes slowly, and there's no reason to
+  spend Finnhub calls re-fetching the same symbol for every user who opens it).
+
+---
+
+## 15. RevenueCat specifics
+
+Subscription infrastructure (~$20–30/yr, CLAUDE.md §6), added 2026-09-02. RevenueCat
+itself is free until $2,500/mo tracked revenue, then 1% — unlike Finnhub, there's no
+ongoing cost pressure at this app's current scale, just a percentage that only shows
+up once real money is flowing.
+
+**What's built:**
+- `react-native-purchases` (SDK) + `expo-dev-client` installed. `Purchases.configure()`
+  is called from `useAuthState.ts` with the Supabase user id as RevenueCat's own
+  `app_user_id` (`lib/purchases.ts`) — chosen specifically so the webhook can trust
+  `event.app_user_id` as a real `auth.users.id` with no separate identity-mapping step.
+- `POST /api/webhooks/revenuecat` — the only writer of `public.subscriptions`,
+  authenticated by a shared secret in the Authorization header (`REVENUECAT_WEBHOOK_SECRET`),
+  not Supabase auth, since RevenueCat's own servers call this. Status is recomputed from
+  the event's expiration timestamp every time, not remembered from the event type — a
+  CANCELLATION means "won't renew," not "revoke now," so this is self-healing the same
+  way the Alpaca SUBMITTED→ACTIVE sync is (a missed or out-of-order webhook can't leave
+  the row permanently wrong). Verified live: wrong secret → 401, missing secret → 503,
+  the dashboard's "Send Test Webhook" event → 200 no-op, an event for an unrelated
+  entitlement → 200 no-op. NOT yet verified: an actual real-entitlement write, since
+  that needs `0004_subscriptions.sql` applied first (§8, §9).
+- `useEntitlement()` (`{ isPremium, loading }`) reads `public.subscriptions` directly
+  via RLS — built, typechecks, not called from anywhere yet.
+
+**Still needed — genuinely open, not just unbuilt:**
+1. **What premium actually gates.** Nothing in the app checks `useEntitlement()` yet.
+   Whatever the answer is has to avoid gating the trading loop itself (§2/§6 — that's
+   the IAP-exempt real-world service, and also just the core business) and avoid
+   anything that could read as advice (§2). The Company Info/Financials tabs (§14) are
+   a natural fit — they're the one feature with a real recurring cost (Finnhub) to
+   offset, and they're pure data display, not advice.
+2. **Paywall screen: custom Terminal Amber design vs. RevenueCat's hosted Paywall UI**
+   (`react-native-purchases-ui`, dashboard-configured, not installed yet). Faster to
+   ship vs. on-brand — a real tradeoff, not a technical question.
+3. **External accounts only the founder can create** — RevenueCat project + iOS/Android
+   app entries + entitlement + offering; Apple Developer Program enrollment ($99/yr) +
+   App Store Connect subscription product; Google Play Console ($25 one-time) + Play
+   Console subscription product. None of this is code — it's dashboards, business
+   verification, and banking/tax info for payouts.
+4. Once those exist: the RevenueCat public SDK keys go in the app's `.env`
+   (`EXPO_PUBLIC_REVENUECAT_IOS_KEY`/`_ANDROID_KEY`), the webhook shared secret and
+   entitlement id go in the backend's `.env` (`REVENUECAT_WEBHOOK_SECRET`,
+   `REVENUECAT_ENTITLEMENT_ID`), and `0004_subscriptions.sql` gets applied — same
+   "hand me the key once you have one" sequencing as Finnhub (§14).
+5. A real device/dev-client test of an actual sandbox purchase end to end — nothing
+   about purchases can be verified through Expo Go or the web preview (§12).
+
+## 16. How to work in this repo
 
 - Prefer small, testable increments over big rewrites. Add one feature, run it, confirm
   it works against the live sandbox backend, then move on.

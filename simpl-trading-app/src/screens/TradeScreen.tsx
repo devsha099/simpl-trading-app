@@ -1,14 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
-import {
-  ActivityIndicator,
-  Pressable,
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { useFocusEffect } from "expo-router";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { SelectField } from "../components/SelectField";
 import { API_BASE, apiFetch } from "../lib/api";
 import { colors, fonts, labelCaps, radius } from "../lib/theme";
 
@@ -25,6 +18,8 @@ type Position = {
   unrealized_plpc?: string;
 };
 
+type Account = { cash: string };
+
 type Quote = {
   bidPrice: number;
   askPrice: number;
@@ -39,34 +34,70 @@ type Quote = {
 type BuyMode = "dollars" | "shares";
 type OrderType = "market" | "limit" | "stop";
 type Side = "buy" | "sell";
+type Hours = "regular" | "extended";
+
+const SIDE_OPTIONS = [
+  { value: "buy", label: "Buy" },
+  { value: "sell", label: "Sell" },
+] as const;
+const ORDER_TYPE_OPTIONS = [
+  { value: "market", label: "Market" },
+  { value: "limit", label: "Limit" },
+  { value: "stop", label: "Stop Loss" },
+] as const;
+const HOURS_OPTIONS = [
+  { value: "regular", label: "Regular Hours" },
+  { value: "extended", label: "Extended Hours" },
+] as const;
+
+// toFixed preserves the sign of a tiny negative even once rounding makes it
+// display as zero (e.g. -0.0001 -> "-0.00") — normalize that one case so a
+// near-zero P&L never reads as a misleadingly-signed "-$0.00".
+const fixed2 = (n: number) => {
+  const s = n.toFixed(2);
+  return s === "-0.00" ? "0.00" : s;
+};
 
 const money = (v: string | number | undefined) =>
-  v === undefined ? "—" : `$${Number(v).toFixed(2)}`;
+  v === undefined ? "—" : `$${fixed2(Number(v))}`;
 
 // unrealized_plpc from Alpaca is a raw fraction (0.036 = 3.6%), not
 // pre-multiplied like the watchlist snapshot's changePercent is.
 const pctFromFraction = (v: string | undefined) =>
-  v === undefined ? "—" : `${Number(v) >= 0 ? "+" : ""}${(Number(v) * 100).toFixed(2)}%`;
+  v === undefined ? "—" : `${Number(v) >= 0 ? "+" : ""}${fixed2(Number(v) * 100)}%`;
 
 /**
- * The trade screen — bid/ask (or last price), order form, Buy/Sell. Reached
- * two ways: from a watchlist ticker row, or from a held position on the
- * Holdings screen (both `(tabs)/watchlists/[symbol].tsx` and
- * `(tabs)/account/[symbol].tsx` re-export this same component so each stays
- * within its own tab's back-stack — see CLAUDE.md §8). Reads only `symbol`
- * from the route; nothing here depends on how the user got here.
+ * The Trade pane — bid/ask (or last price), order form, Buy/Sell. One of
+ * StockScreen's three tabs (Company Info / Trade / Financials — see
+ * screens/StockScreen.tsx) and the default one, since buying/selling is the
+ * app's core loop (CLAUDE.md §1). Takes `symbol` as a prop rather than
+ * reading the route itself — StockScreen is the single owner of the route
+ * param, the screen title, and the outer SafeAreaView; this only ever
+ * renders as a child of it.
+ *
+ * Order form redesign (2026-09-02): Side/Order Type/Trading Hours are
+ * dropdowns (SelectField, same component the questionnaire/banking screens
+ * use) that all start unselected — the single Buy/Sell action button only
+ * appears once Side has a value, and only becomes tappable once every
+ * currently-visible dropdown does. Amount starts empty rather than
+ * prefilled with a guessed default (20 / 0.2), so nobody can submit a size
+ * they didn't actually type.
  */
-export default function TradeScreen() {
-  const { symbol: rawSymbol } = useLocalSearchParams<{ symbol: string }>();
-  const symbol = (rawSymbol ?? "").toUpperCase();
-
+export default function TradeScreen({ symbol }: { symbol: string }) {
   const [position, setPosition] = useState<Position | null>(null);
+  const [account, setAccount] = useState<Account | null>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [loading, setLoading] = useState(true);
-  const [pendingSide, setPendingSide] = useState<Side | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [side, setSide] = useState<Side | "">("");
   const [buyMode, setBuyMode] = useState<BuyMode>("dollars");
-  const [orderType, setOrderType] = useState<OrderType>("market");
-  const [amount, setAmount] = useState("20");
+  const [orderType, setOrderType] = useState<OrderType | "">("");
+  // Alpaca only accepts extended_hours on Limit+day orders (market/stop are
+  // rejected outright), so this dropdown only ever shows — and only ever
+  // applies — when Limit is selected. Always cleared when leaving Limit so
+  // switching back to it never silently carries a stale choice from earlier.
+  const [hours, setHours] = useState<Hours | "">("");
+  const [amount, setAmount] = useState("");
   const [limitPrice, setLimitPrice] = useState("");
   const [stopPrice, setStopPrice] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -87,15 +118,29 @@ export default function TradeScreen() {
     }
   }, [symbol]);
 
+  // Backs the "Amount left to invest" / "Max quantity allowed" caption on
+  // the Buy side — silent on failure, since that caption is a convenience,
+  // not something that should block placing an order if it can't load.
+  const loadAccount = useCallback(async () => {
+    try {
+      const res = await apiFetch("/api/me/account");
+      if (!res.ok) return;
+      setAccount(await res.json());
+    } catch (e) {
+      // Silent — see comment above.
+    }
+  }, []);
+
   // Refetch on focus, not just on mount: React Navigation keeps stack
   // screens mounted across tab switches, so backing out to another tab and
-  // switching back would otherwise show this exact position as it was
-  // before you left — not necessarily reflecting a trade placed elsewhere
-  // in the meantime.
+  // switching back would otherwise show this exact position (and cash
+  // balance) as it was before you left — not necessarily reflecting a trade
+  // or deposit made elsewhere in the meantime.
   useFocusEffect(
     useCallback(() => {
       loadPosition();
-    }, [loadPosition]),
+      loadAccount();
+    }, [loadPosition, loadAccount]),
   );
 
   // Live best bid/ask, polled on an interval — not push/streaming, just a
@@ -127,96 +172,120 @@ export default function TradeScreen() {
     quote?.reliable && quote.bidPrice > 0 && quote.askPrice > 0
       ? (quote.bidPrice + quote.askPrice) / 2
       : quote?.lastPrice ?? undefined;
-  const estimatedCost =
-    buyMode === "shares" && midPrice && Number(amount) > 0
-      ? Number(amount) * midPrice
-      : undefined;
 
-  const placeOrder = useCallback(
-    async (side: Side) => {
-      if (!amount || Number(amount) <= 0) {
-        setError("Enter an amount greater than 0.");
+  const handleOrderTypeChange = useCallback((value: string) => {
+    const next = value as OrderType | "";
+    setOrderType(next);
+    if (next !== "limit") setHours("");
+  }, []);
+
+  // Every dropdown currently on screen needs an explicit choice before the
+  // action button is tappable — Trading Hours only counts while it's
+  // actually showing (Limit orders only).
+  const canSubmit = side !== "" && orderType !== "" && (orderType !== "limit" || hours !== "");
+
+  const placeOrder = useCallback(async () => {
+    if (!side || !orderType) return; // guarded by canSubmit; belt-and-suspenders
+    if (!amount || Number(amount) <= 0) {
+      setError(buyMode === "dollars" ? "Enter a dollar amount greater than 0." : "Enter a share quantity greater than 0.");
+      return;
+    }
+    if (orderType === "limit" && (!limitPrice || Number(limitPrice) <= 0)) {
+      setError("Enter a limit price.");
+      return;
+    }
+    if (orderType === "stop" && (!stopPrice || Number(stopPrice) <= 0)) {
+      setError("Enter a stop price.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      const body: Record<string, string | boolean> = {
+        symbol,
+        side,
+        type: orderType,
+        ...(buyMode === "dollars" ? { notional: amount } : { qty: amount }),
+        ...(orderType === "limit" ? { limit_price: limitPrice } : {}),
+        ...(orderType === "stop" ? { stop_price: stopPrice } : {}),
+        ...(orderType === "limit" && hours === "extended" ? { extended_hours: true } : {}),
+      };
+
+      const res = await apiFetch("/api/me/orders", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setError(
+          data?.message ??
+            (side === "sell"
+              ? "Sell order didn't go through. It may be outside market hours."
+              : "Order didn't go through. It may be outside market hours, or funds haven't settled."),
+        );
         return;
       }
-      if (orderType === "limit" && (!limitPrice || Number(limitPrice) <= 0)) {
-        setError("Enter a limit price.");
-        return;
-      }
-      if (orderType === "stop" && (!stopPrice || Number(stopPrice) <= 0)) {
-        setError("Enter a stop price.");
-        return;
-      }
-
-      setPendingSide(side);
-      setError(null);
-      try {
-        const body: Record<string, string> = {
-          symbol,
-          side,
-          type: orderType,
-          ...(buyMode === "dollars" ? { notional: amount } : { qty: amount }),
-          ...(orderType === "limit" ? { limit_price: limitPrice } : {}),
-          ...(orderType === "stop" ? { stop_price: stopPrice } : {}),
-        };
-
-        const res = await apiFetch("/api/me/orders", {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
-
-        if (!res.ok) {
-          const data = await res.json().catch(() => null);
-          setError(
-            data?.message ??
-              (side === "sell"
-                ? "Sell order didn't go through. It may be outside market hours."
-                : "Order didn't go through. It may be outside market hours, or funds haven't settled."),
-          );
-          return;
-        }
-        // Re-fetches real position data from Alpaca — this is what makes a
-        // sell "physically" show up here: nothing about the position is
-        // ever computed or cached client-side, it's whatever
-        // GET /api/me/positions returns right now, same source of truth
-        // the Holdings screen reads (which also now refreshes on focus,
-        // not just on mount — see holdings.tsx).
-        await loadPosition();
-      } catch (e) {
-        setError("Couldn't reach the backend.");
-      } finally {
-        setPendingSide(null);
-      }
-    },
-    [amount, buyMode, limitPrice, loadPosition, orderType, stopPrice, symbol],
-  );
+      // Re-fetches real position/account data from Alpaca — this is what
+      // makes a sell "physically" show up here: nothing about the position
+      // is ever computed or cached client-side, it's whatever
+      // GET /api/me/positions (and /account, for the cash caption) return
+      // right now, same source of truth the Holdings screen reads.
+      await loadPosition();
+      await loadAccount();
+    } catch (e) {
+      setError("Couldn't reach the backend.");
+    } finally {
+      setSubmitting(false);
+    }
+  }, [side, orderType, amount, buyMode, limitPrice, stopPrice, hours, loadPosition, loadAccount, symbol]);
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.screen, styles.center]}>
+      <View style={styles.center}>
         <ActivityIndicator color={colors.amber} />
-      </SafeAreaView>
+      </View>
     );
   }
-
-  const buying = pendingSide !== null;
 
   // qty vs qty_available differ only when some shares are already tied up
   // in another pending order — Alpaca reduces qty_available the instant an
   // order is PLACED (not just when it fills), so this is real, live data,
   // not something we compute.
   const qtyAvailable = position?.qty_available ?? position?.qty;
+  const qtyAvailableNum = Number(qtyAvailable ?? 0);
   const hasPendingHold =
     position && qtyAvailable !== undefined && Number(qtyAvailable) !== Number(position.qty);
-  const pl = position?.unrealized_pl !== undefined ? Number(position.unrealized_pl) : null;
+  // Rounded to cents before the sign check, so a P&L that's technically a
+  // tiny negative but displays as $0.00 doesn't show a red "down" pill next
+  // to text that reads as neutral.
+  const pl = position?.unrealized_pl !== undefined ? Number(fixed2(Number(position.unrealized_pl))) : null;
+
+  // "Amount left to invest" / "Max quantity allowed" — the same `cash`
+  // figure the Account tab already labels "available to invest" (not
+  // cash_withdrawable, which is a stricter, unrelated T+1-settlement gate
+  // that only applies to ACH withdrawals — using it here would understate
+  // what's actually usable to buy with). Sell side mirrors this against the
+  // position's own qtyAvailable instead, since that's the real ceiling.
+  const cash = account?.cash !== undefined ? Number(account.cash) : undefined;
+  let capCaption: string | null = null;
+  if (side === "buy") {
+    if (buyMode === "dollars") {
+      capCaption = cash !== undefined ? `Amount left to invest: ${money(cash)}` : null;
+    } else if (cash !== undefined && midPrice) {
+      capCaption = `Max quantity allowed: ${(cash / midPrice).toFixed(4)} shares`;
+    }
+  } else if (side === "sell") {
+    if (buyMode === "shares") {
+      capCaption = `Max quantity allowed: ${qtyAvailableNum.toFixed(4)} shares`;
+    } else if (midPrice) {
+      capCaption = `Max amount you can sell: ${money(qtyAvailableNum * midPrice)}`;
+    }
+  }
 
   return (
-    <SafeAreaView style={styles.screen}>
-      <Stack.Screen options={{ title: symbol }} />
-
-      <View style={styles.header}>
-        <Text style={styles.symbolTitle}>{symbol}</Text>
-      </View>
-
+    <View>
       {position ? (
         <View style={styles.positionCard}>
           <View style={styles.positionHeaderRow}>
@@ -224,7 +293,7 @@ export default function TradeScreen() {
             {pl !== null ? (
               <View style={[styles.plPill, pl < 0 && styles.plPillNegative]}>
                 <Text style={[styles.plPillText, pl < 0 && styles.plPillTextNegative]}>
-                  {pl >= 0 ? "+" : ""}
+                  {pl > 0 ? "+" : ""}
                   {money(position.unrealized_pl)} ({pctFromFraction(position.unrealized_plpc)})
                 </Text>
               </View>
@@ -275,42 +344,64 @@ export default function TradeScreen() {
         </View>
       )}
 
+      {/* Standing disclaimer, shown regardless of `reliable` — separate from
+          the thin-quote note above, which only covers the specific case of
+          an implausible spread. This covers the general fact that our quote
+          data is IEX-only (CLAUDE.md §13): even a normal-looking bid/ask
+          reflects one exchange, not the full consolidated market, so the
+          price you're actually filled at can differ. */}
+      <Text style={styles.quoteDisclaimer}>
+        Quotes reflect one exchange only — your fill price may differ.
+      </Text>
+
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      <View style={styles.segmented}>
-        {(["market", "limit", "stop"] as OrderType[]).map((type) => (
-          <Pressable
-            key={type}
-            style={[styles.segment, orderType === type && styles.segmentActive]}
-            onPress={() => setOrderType(type)}
-          >
-            <Text style={[styles.segmentText, orderType === type && styles.segmentTextActive]}>
-              {type === "market" ? "Market" : type === "limit" ? "Limit" : "Stop Loss"}
-            </Text>
-          </Pressable>
-        ))}
+      <View style={styles.dropdowns}>
+        <SelectField
+          label="Side"
+          value={side}
+          onValueChange={(v) => setSide(v as Side | "")}
+          options={SIDE_OPTIONS}
+          placeholder="Select side"
+        />
+        <SelectField
+          label="Order Type"
+          value={orderType}
+          onValueChange={handleOrderTypeChange}
+          options={ORDER_TYPE_OPTIONS}
+          placeholder="Select order type"
+        />
+        {orderType === "limit" ? (
+          <SelectField
+            label="Trading Hours"
+            value={hours}
+            onValueChange={(v) => setHours(v as Hours | "")}
+            options={HOURS_OPTIONS}
+            placeholder="Select hours"
+          />
+        ) : null}
       </View>
+      {orderType === "limit" && hours === "extended" ? (
+        <Text style={styles.extendedHoursNote}>
+          Eligible to fill 4:00 AM – 8:00 PM ET (pre-market and after-hours), not just the regular
+          9:30 AM – 4:00 PM session.
+        </Text>
+      ) : null}
 
-      <View style={styles.segmented}>
+      <View style={styles.modeToggle}>
         <Pressable
-          style={[styles.segment, buyMode === "dollars" && styles.segmentActive]}
-          onPress={() => {
-            setBuyMode("dollars");
-            setAmount("20");
-          }}
+          style={[styles.modeSegment, buyMode === "dollars" && styles.modeSegmentActive]}
+          onPress={() => setBuyMode("dollars")}
         >
-          <Text style={[styles.segmentText, buyMode === "dollars" && styles.segmentTextActive]}>
+          <Text style={[styles.modeSegmentText, buyMode === "dollars" && styles.modeSegmentTextActive]}>
             Dollars
           </Text>
         </Pressable>
         <Pressable
-          style={[styles.segment, buyMode === "shares" && styles.segmentActive]}
-          onPress={() => {
-            setBuyMode("shares");
-            setAmount("0.2");
-          }}
+          style={[styles.modeSegment, buyMode === "shares" && styles.modeSegmentActive]}
+          onPress={() => setBuyMode("shares")}
         >
-          <Text style={[styles.segmentText, buyMode === "shares" && styles.segmentTextActive]}>
+          <Text style={[styles.modeSegmentText, buyMode === "shares" && styles.modeSegmentTextActive]}>
             Shares
           </Text>
         </Pressable>
@@ -325,15 +416,13 @@ export default function TradeScreen() {
             value={amount}
             onChangeText={setAmount}
             keyboardType="decimal-pad"
-            placeholder={buyMode === "dollars" ? "20" : "0.2"}
+            placeholder={buyMode === "dollars" ? "0.00" : "0"}
             placeholderTextColor={colors.paperDim}
             selectionColor={colors.amber}
           />
           {buyMode === "shares" ? <Text style={styles.amountAffix}>shares</Text> : null}
         </View>
-        {estimatedCost !== undefined ? (
-          <Text style={styles.estimate}>≈ {money(estimatedCost)} at current price</Text>
-        ) : null}
+        {capCaption ? <Text style={styles.capCaption}>{capCaption}</Text> : null}
       </View>
 
       {orderType === "limit" ? (
@@ -372,32 +461,28 @@ export default function TradeScreen() {
         </View>
       ) : null}
 
-      <View style={styles.actionRow}>
+      {side ? (
         <Pressable
-          style={[styles.button, styles.buyButton, buying && styles.buttonDisabled]}
-          onPress={() => placeOrder("buy")}
-          disabled={buying}
+          style={[
+            styles.actionButton,
+            side === "buy" ? styles.actionButtonBuy : styles.actionButtonSell,
+            (!canSubmit || submitting) && styles.buttonDisabled,
+          ]}
+          onPress={placeOrder}
+          disabled={!canSubmit || submitting}
         >
-          <Text style={styles.buyButtonText}>{pendingSide === "buy" ? "Placing…" : "Buy"}</Text>
+          <Text style={styles.actionButtonText}>
+            {submitting ? "Placing…" : side === "buy" ? "Buy" : "Sell"}
+          </Text>
         </Pressable>
-        <Pressable
-          style={[styles.button, styles.sellButton, buying && styles.buttonDisabled]}
-          onPress={() => placeOrder("sell")}
-          disabled={buying}
-        >
-          <Text style={styles.sellButtonText}>{pendingSide === "sell" ? "Placing…" : "Sell"}</Text>
-        </Pressable>
-      </View>
-    </SafeAreaView>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.ink },
-  center: { justifyContent: "center", alignItems: "center" },
-  header: { padding: 24, paddingTop: 12, paddingBottom: 4 },
-  symbolTitle: { fontFamily: fonts.monoSemiBold, fontSize: 30, color: colors.paper, letterSpacing: 0.3 },
-  positionLine: { fontFamily: fonts.body, fontSize: 13, color: colors.paperDim, marginHorizontal: 24, marginTop: 4 },
+  center: { alignItems: "center", paddingVertical: 60 },
+  positionLine: { fontFamily: fonts.body, fontSize: 13, color: colors.paperDim, marginHorizontal: 24, marginTop: 12 },
   positionCard: {
     marginHorizontal: 20,
     marginTop: 8,
@@ -426,32 +511,37 @@ const styles = StyleSheet.create({
   statPairSingle: { marginHorizontal: 20, marginTop: 12 },
   statBox: { flex: 1, backgroundColor: colors.inkRaised, borderRadius: radius.md, padding: 12, borderWidth: 1, borderColor: colors.inkLine },
   thinQuoteNote: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.paperDim, marginTop: 8 },
+  quoteDisclaimer: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    lineHeight: 15,
+    color: colors.paperDim,
+    marginHorizontal: 20,
+    marginTop: 6,
+  },
   statLabel: { ...labelCaps, fontSize: 10 },
   statValue: { fontFamily: fonts.mono, fontSize: 17, color: colors.paper, marginTop: 4 },
-  actionRow: {
+  dropdowns: { marginHorizontal: 20, marginTop: 16 },
+  // Smaller than the dropdowns above it — this is a plain mode toggle, not
+  // one of the "all dropdowns selected" gates on the action button, so it
+  // deliberately reads as lighter-weight UI.
+  modeToggle: {
     flexDirection: "row",
     marginHorizontal: 20,
-    marginTop: 20,
-    marginBottom: 20,
-    gap: 12,
+    marginTop: 4,
+    gap: 4,
+    alignSelf: "center",
+    backgroundColor: colors.inkRaised,
+    borderRadius: radius.sm,
+    padding: 2,
   },
-  button: { flex: 1, padding: 18, borderRadius: 14, alignItems: "center" },
-  buyButton: {
-    backgroundColor: colors.amber,
-    shadowColor: colors.amber,
-    shadowOpacity: 0.45,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
-  },
-  sellButton: { backgroundColor: "transparent", borderWidth: 1.5, borderColor: colors.inkLine },
-  buttonDisabled: { opacity: 0.5 },
-  buyButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 16, color: colors.buttonInk },
-  sellButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 16, color: colors.paper },
-  estimate: { fontFamily: fonts.body, textAlign: "center", color: colors.paperDim, fontSize: 13, marginTop: 10 },
+  modeSegment: { paddingVertical: 5, paddingHorizontal: 14, borderRadius: radius.sm - 2 },
+  modeSegmentActive: { backgroundColor: colors.amber },
+  modeSegmentText: { fontFamily: fonts.bodySemiBold, fontSize: 11, color: colors.paperDim },
+  modeSegmentTextActive: { color: colors.buttonInk },
   amountBox: {
     marginHorizontal: 20,
-    marginTop: 16,
+    marginTop: 12,
     backgroundColor: colors.inkRaised,
     borderRadius: radius.lg,
     borderWidth: 1,
@@ -486,28 +576,39 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   amountAffix: { fontFamily: fonts.mono, fontSize: 18, color: colors.paperDim, marginHorizontal: 4 },
-  segmented: {
-    flexDirection: "row",
+  capCaption: { fontFamily: fonts.body, fontSize: 12, color: colors.paperDim, marginTop: 8 },
+  extendedHoursNote: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.paperDim,
     marginHorizontal: 20,
-    marginTop: 14,
-    gap: 6,
-    backgroundColor: colors.inkRaised,
-    borderRadius: radius.md,
-    padding: 4,
+    marginTop: 6,
   },
-  segment: {
-    flex: 1,
-    paddingVertical: 11,
-    borderRadius: radius.sm,
+  actionButton: {
+    marginHorizontal: 20,
+    marginTop: 20,
+    marginBottom: 20,
+    padding: 18,
+    borderRadius: 14,
     alignItems: "center",
   },
-  segmentActive: {
-    backgroundColor: colors.amber,
-    shadowColor: colors.amber,
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 0 },
+  actionButtonBuy: {
+    backgroundColor: colors.buyGreen,
+    shadowColor: colors.buyGreen,
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
-  segmentText: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.paperDim },
-  segmentTextActive: { color: colors.buttonInk },
+  actionButtonSell: {
+    backgroundColor: colors.sellRed,
+    shadowColor: colors.sellRed,
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  actionButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 16, color: colors.buttonInk },
+  buttonDisabled: { opacity: 0.5 },
 });

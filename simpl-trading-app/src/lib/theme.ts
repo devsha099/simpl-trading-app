@@ -21,6 +21,13 @@ export const colors = {
   phosphor: "#63c191",
   rust: "#c96b4c",
   buttonInk: "#241505",
+  // Deliberately more saturated than phosphor/rust above — those two are
+  // the muted, informational P&L semantic (a small pill of text), while
+  // these are the actual Buy/Sell call-to-action buttons on the trade
+  // screen and need to read as vibrant, high-contrast, tappable actions,
+  // not as a status label. Don't reuse phosphor/rust for a button fill.
+  buyGreen: "#22c55e",
+  sellRed: "#ef4444",
 };
 
 // The stacked spectrum-stripe motif — a deliberate, curated band (not a

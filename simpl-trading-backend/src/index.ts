@@ -7,7 +7,10 @@ import { investmentProfileRoutes } from "./routes/me/investmentProfile.js";
 import { tradingRoutes } from "./routes/me/trading.js";
 import { kycDetailsRoutes } from "./routes/me/kycDetails.js";
 import { bankingRoutes } from "./routes/me/banking.js";
+import { companyRoutes } from "./routes/company.js";
+import { revenuecatWebhookRoutes } from "./routes/webhooks/revenuecat.js";
 import { AlpacaError } from "./alpaca.js";
+import { FinnhubError } from "./finnhub.js";
 
 const app = Fastify({ logger: true });
 import cors from "@fastify/cors";
@@ -37,6 +40,17 @@ app.setErrorHandler((error, _req, reply) => {
       details: error.body,
     });
   }
+  if (error instanceof FinnhubError) {
+    // status 0 means FINNHUB_API_KEY isn't set at all — routes/company.ts
+    // already turns that into a clean 503 itself, so reaching here means a
+    // real Finnhub-side failure (rate limit, invalid key, outage).
+    app.log.warn({ status: error.status, body: error.body }, "Finnhub rejected a request");
+    return reply.code(error.status || 502).send({
+      error: "finnhub_error",
+      status: error.status,
+      details: error.body,
+    });
+  }
   app.log.error(error);
   return reply.code(500).send({ error: "internal_error" });
 });
@@ -48,6 +62,8 @@ app.register(investmentProfileRoutes, { prefix: "/api/me" });
 app.register(tradingRoutes, { prefix: "/api/me" });
 app.register(kycDetailsRoutes, { prefix: "/api/me" });
 app.register(bankingRoutes, { prefix: "/api/me" });
+app.register(companyRoutes, { prefix: "/api/company" });
+app.register(revenuecatWebhookRoutes, { prefix: "/api/webhooks" });
 
 app
   .listen({ port: config.port, host: "0.0.0.0" })

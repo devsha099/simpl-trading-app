@@ -58,6 +58,7 @@ export async function tradingRoutes(app: FastifyInstance): Promise<void> {
       qty?: string;
       limit_price?: string;
       stop_price?: string;
+      extended_hours?: boolean;
     };
   }>("/orders", { preHandler: requireAuth }, async (req, reply) => {
     const account = await getAccountForUser(req.user!.id);
@@ -67,7 +68,7 @@ export async function tradingRoutes(app: FastifyInstance): Promise<void> {
     const symbol = (req.body?.symbol ?? "").toUpperCase();
     const side = req.body?.side ?? "buy";
     const type = req.body?.type ?? "market";
-    const { notional, qty, limit_price, stop_price } = req.body ?? {};
+    const { notional, qty, limit_price, stop_price, extended_hours } = req.body ?? {};
 
     if (!symbol) {
       return reply.code(400).send({ error: "missing_symbol", message: "Provide a symbol." });
@@ -87,6 +88,16 @@ export async function tradingRoutes(app: FastifyInstance): Promise<void> {
     if (type === "stop" && !stop_price) {
       return reply.code(400).send({ error: "missing_stop_price", message: "Stop orders need a stop_price." });
     }
+    // Alpaca only accepts extended_hours on limit+day orders — rejects
+    // market/stop outright. The client already only shows this toggle for
+    // Limit orders, but the backend is the real boundary (a client can
+    // always send whatever it wants directly to the API).
+    if (extended_hours && type !== "limit") {
+      return reply.code(400).send({
+        error: "extended_hours_requires_limit",
+        message: "Extended-hours trading requires a Limit order.",
+      });
+    }
 
     const insufficientSharesError = {
       error: "insufficient_shares",
@@ -104,7 +115,7 @@ export async function tradingRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    const order: Record<string, string> = {
+    const order: Record<string, string | boolean> = {
       symbol,
       side,
       type,
@@ -112,6 +123,10 @@ export async function tradingRoutes(app: FastifyInstance): Promise<void> {
       ...(qty ? { qty } : { notional: notional as string }),
       ...(limit_price ? { limit_price } : {}),
       ...(stop_price ? { stop_price } : {}),
+      // Omitted (not just false) when not extended-hours — matches
+      // Alpaca's own default and keeps the payload identical to before
+      // this feature existed for every regular-hours order.
+      ...(extended_hours ? { extended_hours: true } : {}),
     };
 
     try {
