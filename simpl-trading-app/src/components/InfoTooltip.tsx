@@ -10,20 +10,32 @@ import { colors, fonts, radius } from "../lib/theme";
  * hover state at all — a hover-only tooltip is simply invisible on the primary
  * platform. Web gets both; native gets tap.
  *
+ * Hover and tap are tracked as SEPARATE booleans, not one shared toggle — a
+ * single `open` flag flipped by both looks reasonable but breaks on any real
+ * mouse: hovering a Pressable fires onHoverIn before the click's onPress, so
+ * "hover opens it, click toggles the same flag" means the press immediately
+ * closes what the hover just opened. Confirmed live: a scripted click left
+ * the bubble open across unrelated later steps instead of closing on the
+ * second tap — this exact race, not a one-off. Keeping the two independent
+ * and OR-ing them means a still-hovered bubble never disappears out from
+ * under the pointer, and tap-to-toggle keeps working with no mouse involved.
+ *
  * The bubble is absolutely positioned so opening it never reflows the row it
  * belongs to.
  */
 export function InfoTooltip({ text, label }: { text: string; label?: string }) {
-  const [open, setOpen] = useState(false);
+  const [tapped, setTapped] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const open = tapped || hovered;
   const hoverProps =
     Platform.OS === "web"
-      ? { onHoverIn: () => setOpen(true), onHoverOut: () => setOpen(false) }
+      ? { onHoverIn: () => setHovered(true), onHoverOut: () => setHovered(false) }
       : {};
 
   return (
     <View style={styles.wrap}>
       <Pressable
-        onPress={() => setOpen((v) => !v)}
+        onPress={() => setTapped((v) => !v)}
         hitSlop={10}
         accessibilityRole="button"
         accessibilityLabel={label ? `${label} — more information` : "More information"}

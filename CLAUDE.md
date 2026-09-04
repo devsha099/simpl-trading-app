@@ -632,7 +632,11 @@ locked "cash accounts only"), this *reinforces* the philosophy rather than fight
 - **Only BUYS are gated, and only buys that OPEN a position.** Adding to something
   already held is allowed at the limit; sells are never blocked at all (§6 treats a
   hard sell lock as legally risky, and the feature's own wording scopes it to
-  "opening a position").
+  "opening a position"). "Already held" checks BOTH filled positions AND currently
+  open (unfilled) buy orders for that symbol — checking positions alone was a real
+  bug, caught live: a second buy of a symbol whose first buy hadn't filled yet (a
+  Limit order not yet triggered, or simply an after-hours queue) looked like
+  "opening a new position" and wrongly burned a round trade.
 - **An unverifiable market cap blocks the buy** (fail closed). An obscure name with no
   Finnhub data is precisely what the floor exists to keep out, so "we don't know" is
   treated as "not allowed."
@@ -664,3 +668,19 @@ clean message.
   extend a lock.
 - `getOrders()` takes an optional `after` so the 100-row cap can't truncate the week
   being counted.
+- **`InfoTooltip.tsx`'s hover and tap must be tracked as separate booleans, not one
+  shared toggle.** A Pressable's `onHoverIn` fires before `onPress` on a real mouse
+  click, so "hover opens it, click flips the same flag" means the click immediately
+  closes what the hover just opened — confirmed live via a scripted click that left
+  a bubble open across unrelated later UI steps instead of closing on the second tap.
+  Fixed by keeping `hovered`/`tapped` independent and OR-ing them for visibility.
+- **Verified live against the real sandbox**, not just typechecked: the $1B floor
+  blocked a real GPRO buy and allowed a real KO buy; a round-trade limit set exactly
+  to current usage blocked a new symbol and allowed adding to an already-held one;
+  sells succeeded with both limits active; the cooldown's tighten-now/loosen-later
+  asymmetry held across 6 transition cases. One test-script trap surfaced along the
+  way: placing a same-symbol buy then immediately a sell (or vice versa) trips
+  Alpaca's own "potential wash trade" rejection while the first order is still
+  open — real Alpaca behavior, not a Trade Limits bug, but it means a test can't
+  reuse a symbol across a buy-check and a sell-check without waiting for the first
+  order to clear.

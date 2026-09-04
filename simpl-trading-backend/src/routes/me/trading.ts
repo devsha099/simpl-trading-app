@@ -174,11 +174,22 @@ export async function tradingRoutes(app: FastifyInstance): Promise<void> {
         if (limits.roundTradeLimit !== null) {
           // Only OPENING a position counts. Adding to something already held
           // isn't "another position," so topping up an existing holding stays
-          // available even at the limit.
-          const positions = (await alpaca.getPositions(accountId)) as Position[];
+          // available even at the limit — and "already held" has to include a
+          // buy still WORKING on this symbol, not just a filled position.
+          // Without the open-orders half of this check, a Limit order that
+          // hasn't triggered yet (or, as found live, one that's simply
+          // queued outside market hours) makes a second buy of the very same
+          // symbol look like "opening a new position" and wrongly burns a
+          // round trade — confirmed live against a real queued after-hours
+          // order before this fix.
+          const [positions, openOrders] = await Promise.all([
+            alpaca.getPositions(accountId) as Promise<Position[]>,
+            alpaca.getOrders(accountId, "open") as Promise<{ symbol: string; side: string }[]>,
+          ]);
           const alreadyHeld = positions.some((p) => p.symbol === symbol && Number(p.qty) > 0);
+          const hasWorkingBuy = openOrders.some((o) => o.symbol === symbol && o.side === "buy");
 
-          if (!alreadyHeld) {
+          if (!alreadyHeld && !hasWorkingBuy) {
             const used = await countRoundTripsThisWeek(accountId);
             if (used >= limits.roundTradeLimit) {
               return reply.code(400).send({
