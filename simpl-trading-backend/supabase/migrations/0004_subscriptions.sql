@@ -5,7 +5,7 @@
 -- say, never what a client claims — a client that could write its own row
 -- could just grant itself premium for free. The app reads this row directly
 -- via RLS to gate premium features, no backend round trip needed per check.
-create table public.subscriptions (
+create table if not exists public.subscriptions (
   user_id uuid primary key references auth.users (id) on delete cascade,
   -- RevenueCat's own app_user_id for this customer. We configure the SDK to
   -- use the Supabase user id directly as app_user_id (see lib/purchases.ts),
@@ -26,6 +26,9 @@ create table public.subscriptions (
 
 alter table public.subscriptions enable row level security;
 
+-- Dropped first so the whole migration is safe to re-run (CREATE POLICY has
+-- no IF NOT EXISTS).
+drop policy if exists "subscriptions are readable by owner" on public.subscriptions;
 create policy "subscriptions are readable by owner"
   on public.subscriptions for select
   using (auth.uid() = user_id);

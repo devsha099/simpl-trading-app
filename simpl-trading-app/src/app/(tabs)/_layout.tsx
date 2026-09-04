@@ -27,6 +27,7 @@ const TAB_BAR_HIDDEN_ROUTES: Record<string, string[]> = {
     "banking/index",
     "banking/transfer",
     "banking/bank",
+    "trade-limits",
   ],
   settings: ["profile"],
 };

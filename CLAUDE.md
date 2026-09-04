@@ -608,3 +608,59 @@ via RLS; built, not called from anywhere yet.
 - Prefer an actual Playwright run over "it typechecks" when verifying navigation —
   this project shipped a real routing bug that both typecheck and build missed.
 - Keep this file updated when a decision changes — tersely.
+
+---
+
+## 17. Trade Limits
+
+User-set guardrails against the two behaviors §1's audience is trying to quit: weekly
+churn and going all-in on micro-caps. Account → Trade Limits. Unlike margin (§6's
+locked "cash accounts only"), this *reinforces* the philosophy rather than fighting it.
+
+**Two limits, both optional:**
+- **Round trade limit** (0–10, or unset = no limit). `0` is meaningfully different from
+  unset: it means "open no new positions at all."
+- **Market cap limit** — a floor from a fixed dropdown ($10M…$100B), or No limit.
+
+**Definitions that were judgement calls, not obvious readings:**
+- **A round trip = a buy AND a sell of the same symbol, both filled inside the same
+  Mon–Fri ET window.** Selling a position opened weeks ago does NOT count. Deliberate:
+  the limit exists to slow in-week churn, and burning a round trip on a long-held exit
+  would penalize exactly the calm behavior the app encourages. Counting every sell
+  instead would do that. Partial fills count by intent, not quantity —
+  buy-buy-sell is one trip, buy-sell-buy-sell is two (`roundTrips.ts`).
+- **Only BUYS are gated, and only buys that OPEN a position.** Adding to something
+  already held is allowed at the limit; sells are never blocked at all (§6 treats a
+  hard sell lock as legally risky, and the feature's own wording scopes it to
+  "opening a position").
+- **An unverifiable market cap blocks the buy** (fail closed). An obscure name with no
+  Finnhub data is precisely what the floor exists to keep out, so "we don't know" is
+  treated as "not allowed."
+
+**Cooldown toggle** — when on, changes that *loosen* protection (raising/removing the
+round-trade cap, lowering/removing the market-cap floor, or switching the cooldown
+itself off) are queued until the next weekday 9:30 AM ET; changes that *tighten* apply
+immediately. Delaying a tightening would postpone a user's own protection at the moment
+they reach for it, which is backwards. Turning the cooldown off counts as loosening on
+purpose — instantly-flippable would make it no commitment at all.
+
+**Enforcement is server-side**, in `POST /api/me/orders` — a UI-only limit is
+bypassable by anything that can reach the API. The screen pre-checks purely for a
+clean message.
+
+- Storage: columns on `user_settings` (migration `0005`), whose existing RLS is already
+  owner-read-AND-write — correct here, since a self-imposed limit isn't an adversarial
+  control and Reset requires it. The commitment mechanism is the cooldown, not RLS.
+  `min_market_cap` is whole **dollars**; Finnhub reports **millions**, converted once at
+  the comparison site (§14).
+- `GET`/`PUT /api/me/trade-limits` go through the backend rather than direct Supabase
+  (the usual pattern for app data, §3) because resolving a matured cooldown must happen
+  in one place, and the weekly round-trip count comes from Alpaca order history the
+  client can't reach.
+- `marketTime.ts` holds the only date math in the codebase — ET week start and next
+  market open, Intl-based, verified across both DST boundaries. **Known limitation:
+  market holidays aren't accounted for**, so a queued change can activate on a holiday
+  morning — always earlier than a strict reading, never later, so it can't silently
+  extend a lock.
+- `getOrders()` takes an optional `after` so the 100-row cap can't truncate the week
+  being counted.

@@ -19,6 +19,7 @@ export default function AccountLayout() {
       <Stack.Screen name="banking/index" options={{ title: "Banking" }} />
       <Stack.Screen name="banking/transfer" options={{ title: "Transfer Money" }} />
       <Stack.Screen name="banking/bank" options={{ title: "Bank Account" }} />
+      <Stack.Screen name="trade-limits" options={{ title: "Trade Limits" }} />
       <Stack.Screen name="[symbol]" options={{ title: "" }} />
     </Stack>
   );

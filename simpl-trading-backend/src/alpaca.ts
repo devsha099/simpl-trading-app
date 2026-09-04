@@ -137,7 +137,14 @@ export const alpaca = {
    * GET /v1/trading/accounts/{id}/orders — list orders. `status` is Alpaca's
    * own filter: "open" | "closed" | "all". Closed = filled/canceled/expired,
    * i.e. trade history; open = still working.
+   *
+   * `after` (ISO timestamp) narrows server-side. The round-trip counter passes
+   * the start of the trading week so the 100-row cap can't silently truncate
+   * the window it's counting over and under-report someone's usage.
    */
-  getOrders: (accountId: string, status: "open" | "closed" | "all") =>
-    alpacaFetch(`/v1/trading/accounts/${accountId}/orders?status=${status}&limit=100`),
+  getOrders: (accountId: string, status: "open" | "closed" | "all", after?: string) =>
+    alpacaFetch(
+      `/v1/trading/accounts/${accountId}/orders?status=${status}&limit=100` +
+        (after ? `&after=${encodeURIComponent(after)}` : ""),
+    ),
 };

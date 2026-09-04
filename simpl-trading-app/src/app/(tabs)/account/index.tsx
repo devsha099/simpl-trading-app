@@ -21,6 +21,7 @@ const SECTIONS = [
   { route: "/account/orders", title: "Orders", subtitle: "Orders still working" },
   { route: "/account/trade-history", title: "Trade History", subtitle: "Everything that's filled or closed" },
   { route: "/account/banking", title: "Banking", subtitle: "Move money in and out" },
+  { route: "/account/trade-limits", title: "Trade Limits", subtitle: "Guardrails you set for yourself" },
 ] as const;
 
 export default function AccountScreen() {

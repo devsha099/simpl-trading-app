@@ -2,6 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { alpaca, AlpacaError } from "../../alpaca.js";
 import { requireAuth } from "../../auth.js";
 import { getAccountForUser } from "../../db/accounts.js";
+import { getTradeLimits } from "../../db/tradeLimits.js";
+import { countRoundTripsThisWeek } from "../../roundTrips.js";
+import { getCompanyProfile } from "../../companyData.js";
+import { formatMarketCap } from "../../data/tradeLimits.js";
 
 type Position = {
   symbol: string;
@@ -131,6 +135,61 @@ export async function tradingRoutes(app: FastifyInstance): Promise<void> {
 
         if (!position || !Number.isFinite(requestedShares) || requestedShares > available) {
           return reply.code(400).send(insufficientSharesError);
+        }
+      }
+
+      // --- Trade Limits (CLAUDE.md §17) -----------------------------------
+      // BUYS ONLY, and enforced here rather than in the UI because a limit
+      // that only exists client-side is bypassable by anything that can reach
+      // this endpoint. Sells are never blocked — §6 treats a hard lock on
+      // selling as legally risky, and the user's own tooltip scopes this to
+      // "opening a position."
+      if (side === "buy") {
+        const { effective: limits } = await getTradeLimits(req.user!.id);
+
+        if (limits.minMarketCap !== null) {
+          const profile = await getCompanyProfile(symbol);
+          // Finnhub reports marketCapitalization in MILLIONS (§14) — convert
+          // once, here, so the stored limit stays in plain dollars.
+          const capDollars =
+            profile?.marketCapitalization != null ? profile.marketCapitalization * 1_000_000 : null;
+
+          if (capDollars === null) {
+            // Fail closed: an unverifiable market cap is exactly the kind of
+            // obscure name this limit exists to keep out, so "we don't know"
+            // is treated as "not allowed" rather than waved through.
+            return reply.code(400).send({
+              error: "market_cap_unverified",
+              message: `We couldn't verify the market cap for ${symbol}, so it's blocked by your ${formatMarketCap(limits.minMarketCap)} market-cap limit.`,
+            });
+          }
+          if (capDollars < limits.minMarketCap) {
+            return reply.code(400).send({
+              error: "below_market_cap_limit",
+              message: `${symbol} is ${formatMarketCap(capDollars)}, below your ${formatMarketCap(limits.minMarketCap)} market-cap limit.`,
+            });
+          }
+        }
+
+        if (limits.roundTradeLimit !== null) {
+          // Only OPENING a position counts. Adding to something already held
+          // isn't "another position," so topping up an existing holding stays
+          // available even at the limit.
+          const positions = (await alpaca.getPositions(accountId)) as Position[];
+          const alreadyHeld = positions.some((p) => p.symbol === symbol && Number(p.qty) > 0);
+
+          if (!alreadyHeld) {
+            const used = await countRoundTripsThisWeek(accountId);
+            if (used >= limits.roundTradeLimit) {
+              return reply.code(400).send({
+                error: "round_trade_limit_reached",
+                message:
+                  limits.roundTradeLimit === 0
+                    ? "Your round-trade limit is set to 0, so new positions are paused. It resets Monday."
+                    : `You've used all ${limits.roundTradeLimit} of your round trades this week. You can still add to positions you already hold, and it resets Monday.`,
+              });
+            }
+          }
         }
       }
 
