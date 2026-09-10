@@ -124,7 +124,12 @@ and navigate directly instead of relying on the listener (§12).
     Money** / **Withdraw Money** / **Add-Remove Bank Account**, transfer history with
     a status pill (Pending/Complete/Rejected/Canceled) and per-row cancel. Wire
     transfers out of scope (sandbox is ACH-only).
-  - **Education** — placeholder ("coming soon"), formerly "Research"; will hold
+  - **Education** — a search box, the (still-empty) video shelf, then Webull-style
+    scroll sections each showing 3 preview rows with the rest behind "See all":
+    **The S&P 500** (browse/filter by sector), **Sector Performance**, **Stock
+    Performance** (1M/3M/YTD/1Y switcher). **Largest Companies** renders as a
+    deliberate "not available" card — ranking by market cap needs a cap feed we
+    don't have (§14). See §18. Formerly "Research"; will also hold
     financial-education videos.
   - **Settings** — read-only **Profile** + Sign Out.
 - **The stock screen** — reached from a watchlist row or a Holdings row, one screen per
@@ -251,7 +256,9 @@ workspace/
     │       │                     level past a tab's root (§12)
     │       ├── watchlists/       index -> [watchlistId]/index -> stock/[symbol]
     │       ├── account/          index -> holdings/orders/trade-history/banking/[symbol]
-    │       ├── education/index.tsx
+    │       ├── education/       index -> [section] -> stock/[symbol] (§18). Gained
+    │       │                     its own _layout.tsx, so its tab route name changed
+    │       │                     from "education/index" to "education" (§12).
     │       └── settings/         index -> profile
     ├── src/lib/
     │   ├── api.ts                API_BASE (self-resolving, §12) + apiFetch()
@@ -330,6 +337,9 @@ both required (a migration that adds RLS without the base GRANT 403s everything)
 - `GET /api/alpaca/assets/search?q=` — ticker/company autocomplete, capped at 6.
 - `GET /api/alpaca/assets/:symbol` — exists-and-tradable check; 404 if not. The
   authoritative gate before anything reaches a watchlist.
+- `GET /api/markets/overview` — every Education section's preview in one call.
+  `/performance?window=&limit=`, `/sectors?window=`, `/companies?sector=&limit=&offset=`
+  are the expanded views. All ranked inside the S&P 500 only (§18).
 - `GET /api/company/:symbol/profile`, `/financials` — Finnhub-backed (§14). 404 if no
   data, 503 if `FINNHUB_API_KEY` unset. Rate-limited 30/min (Finnhub's own cap is
   60/min for the whole app).
@@ -378,6 +388,9 @@ Every screen is session-derived — no hardcoded account id, no on-device-only d
 - A REJECTED/RETURNED transfer's styling has never been seen against real data
   (sandbox can't force an ACH failure) — code path exists, only
   Pending/Complete/Canceled confirmed.
+- Education/markets: verified live, but "Largest Companies" is deliberately empty and
+  Finnhub coverage now breaks §17's market-cap floor (§14, §17) — both pending the
+  Finnhub plan decision.
 - Company Info/Financials: Finnhub's free-tier rate limit (60/min) hasn't been
   stress-tested — fine for dev, revisit before real traffic.
 - RevenueCat: nothing gates on `useEntitlement()` yet; `0004_subscriptions.sql` not
@@ -554,6 +567,21 @@ build against, with a self-serve paid Starter tier (~$50/mo) for real commercial
   defensively, falling back to null/"—" rather than guessing — also a brand call
   (dumping 100+ fields would be a fundamentals-flavored "dozens of metrics," §1).
 - `marketCapitalization`/`shareOutstanding` are in **millions**, not billions.
+- **FREE-TIER COVERAGE COLLAPSED (measured 2026-09-10) — this breaks shipped
+  features.** `profile2` AND `metric` now return `{"error":"You don't have access to
+  this resource."}` for most large caps. Of 18 mega-caps probed, only 6 still work
+  (AAPL, MSFT, NVDA, TSLA, WMT, PFE); GOOGL, AMZN, META, KO, JPM, BAC, XOM, CVX, JNJ,
+  UNH, V and MA all fail. KO *did* work on 2026-09-01 during Trade Limits
+  verification, so this is a vendor change, not a mis-test. Consequences: Company
+  Info/Financials are blank for those symbols, and §17's market-cap floor fails
+  closed on them (see §17). Alpaca is unaffected — it has full coverage.
+- The paid **standardized** statements endpoint (`/stock/financials`) is a different,
+  better product than `financials-reported` and is what any statement-visualization
+  feature should use: verified on a demo key that AAPL and WMT share 15 identically
+  named fields (`revenue`, `costOfGoodsSold`, `grossIncome`, `ebit`, `netIncome`),
+  that components reconcile exactly (AAPL 416,161 − 220,960 = 195,201 = grossIncome),
+  and that IC/BS/CF all go back 40+ years. Untested for banks/insurers/REITs — JPM and
+  XOM are outside the demo key's allowlist, so that remains the open question.
 - Free tier is personal/non-commercial per Finnhub's terms — a paid plan is required
   before real subscribers see this data; confirm in writing first.
 - Field names confirmed live against a real key (AAPL) on the first try — re-verify if
@@ -637,6 +665,12 @@ locked "cash accounts only"), this *reinforces* the philosophy rather than fight
   bug, caught live: a second buy of a symbol whose first buy hadn't filled yet (a
   Limit order not yet triggered, or simply an after-hours queue) looked like
   "opening a new position" and wrongly burned a round trade.
+- **LIVE BUG (found 2026-09-10, not yet fixed):** fail-closed + Finnhub's collapsed
+  free-tier coverage (§14) means a user with a market-cap floor set currently CANNOT
+  buy JPM, GOOGL, AMZN, KO, JNJ, V and most other blue chips — the exact opposite of
+  what the floor is for. Latent until someone sets a floor. Neither obvious fix is
+  good (failing open guts the floor; staying closed blocks blue chips); the real fix
+  is a market-cap source with real coverage, which is the pending Finnhub decision.
 - **An unverifiable market cap blocks the buy** (fail closed). An obscure name with no
   Finnhub data is precisely what the floor exists to keep out, so "we don't know" is
   treated as "not allowed."
@@ -684,3 +718,57 @@ clean message.
   open — real Alpaca behavior, not a Trade Limits bug, but it means a test can't
   reuse a symbol across a buy-check and a sell-check without waiting for the first
   order to clear.
+
+---
+
+## 18. Education tab & market sections
+
+Search box first, then the (still-empty) video shelf, then Webull-style scroll
+sections — each with a heading, three preview rows, a "See all", and a real gap
+before the next. Added 2026-09-10.
+
+**The universe is the feature.** Every list ranks strictly inside the S&P 500
+(`data/sp500.ts`, 503 rows of symbol+name+GICS sector, all verified tradable against
+Alpaca when generated). That is a deliberate product decision, not a data compromise:
+- Alpaca's own `/v1beta1/screener/stocks/movers` and `/most-actives` work fine, but
+  what they actually return is penny stocks and warrants — measured live, the top
+  gainers were a warrant at $0.0276 (+176%), one at $0.39 (+95%). Those are exactly
+  the micro-caps §17's market-cap floor exists to keep users away from. Shipping a
+  movers feed would have one feature blocking what another promotes.
+- Ranking inside a large-cap universe makes that **structurally impossible** rather
+  than filtered-out, so no future config change can reintroduce it.
+- It also reframes "top 500 by market cap" (which needs a cap feed we don't have)
+  as "The S&P 500", a better fit for §1's index-and-hold audience.
+- Longest horizon leads: 1Y is the default everywhere, and Sector Performance sits
+  above Stock Performance — which part of the market moved is a more useful lesson
+  than which single ticker moved most.
+
+**Static dataset on purpose.** `data/sp500.ts` is generated, not fetched: Finnhub's
+index-constituents endpoint is premium and its profile coverage collapsed (§14).
+Same mirrored-static pattern as `usStates.ts`/`financialProfile.ts`. Regenerate when
+the index changes (a few times a year).
+
+- **Performance comes from Alpaca daily bars**, not Finnhub — `alpacaData.getDailyBars`,
+  computed in `marketPerformance.ts`, cached 6h with an in-flight promise so
+  concurrent first-hits share one refresh (cold ~6s for all 503, then ~0.3s).
+- **`adjustment=split` is required** — without it a stock that split mid-window shows
+  a fake ~50% loss. Dividends deliberately NOT adjusted: these are price returns, and
+  quietly showing total return under a "1 Year" label would overstate what a holder saw.
+- **YTD anchors on the last close of last year**, not Jan 1 — Jan 1 is never a trading
+  day and the year's first session already contains part of the move being measured.
+- **Sector figures are equal-weighted, not cap-weighted** (no cap data), so they won't
+  match a sector ETF. The API says `weighting:"equal"` and the UI states it — a number
+  that silently disagrees with a benchmark is worse than one that explains itself.
+- A missing anchor returns **null, not 0** — "we can't say" is not "it didn't move".
+- Unbuildable sections are returned as real structure with `available:false` + a
+  reason and rendered as an honest card, so filling them later is a data change.
+- **Add-to-watchlist now works from a stock's own page** (`AddToWatchlistSheet`),
+  reachable from every entry point. A list already holding the symbol renders checked
+  and non-tappable rather than hidden — hiding it would look like the symbol wasn't
+  saved anywhere. `useWatchlists.addSymbol` also guards duplicates internally, so the
+  rule is enforced in both places.
+- Verified by driving a real browser (§16): 27 checks across both suites, 0 runtime
+  errors — tab label, all sections, search→stock→watchlist→dedupe-on-reopen, window
+  switcher re-ranking, and an unknown section id showing not-found. One apparent
+  failure was the test's own `.first()` landing on the alphabetical S&P 500 list,
+  which correctly has no window switcher; confirmed by screenshot before "fixing" it.

@@ -11,6 +11,7 @@ import { kycDetailsRoutes } from "./routes/me/kycDetails.js";
 import { bankingRoutes } from "./routes/me/banking.js";
 import { tradeLimitsRoutes } from "./routes/me/tradeLimits.js";
 import { companyRoutes } from "./routes/company.js";
+import { marketsRoutes } from "./routes/markets.js";
 import { revenuecatWebhookRoutes } from "./routes/webhooks/revenuecat.js";
 import { AlpacaError } from "./alpaca.js";
 import { FinnhubError } from "./finnhub.js";
@@ -144,6 +145,7 @@ app.register(kycDetailsRoutes, { prefix: "/api/me" });
 app.register(bankingRoutes, { prefix: "/api/me" });
 app.register(tradeLimitsRoutes, { prefix: "/api/me" });
 app.register(companyRoutes, { prefix: "/api/company" });
+app.register(marketsRoutes, { prefix: "/api/markets" });
 app.register(revenuecatWebhookRoutes, { prefix: "/api/webhooks" });
 
 app

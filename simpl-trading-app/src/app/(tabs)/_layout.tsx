@@ -29,6 +29,7 @@ const TAB_BAR_HIDDEN_ROUTES: Record<string, string[]> = {
     "banking/bank",
     "trade-limits",
   ],
+  education: ["[section]", "stock/[symbol]"],
   settings: ["profile"],
 };
 
@@ -53,14 +54,14 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="watchlists" options={{ title: "Watchlists" }} />
       <Tabs.Screen name="account" options={{ title: "Account" }} />
-      {/* "education/index", not "education": the other three tabs are
-          folders with their own _layout.tsx, so their route is the folder
-          name. Education is a bare index.tsx with no layout, so its route
-          keeps the /index suffix — naming it "education" here would match
-          nothing and the tab would render the raw route string as its
-          label (this exact bug happened once under this tab's old name,
-          "Research" — see CLAUDE.md §12). */}
-      <Tabs.Screen name="education/index" options={{ title: "Education" }} />
+      {/* "education", not "education/index": this tab gained its own
+          _layout.tsx when the market sections were added, so it now
+          registers as the folder name like the other three. It was
+          "education/index" while it was a bare index.tsx — getting this
+          wrong makes the tab render its raw route string as the label
+          (CLAUDE.md §12; happened once already under the old "Research"
+          name). */}
+      <Tabs.Screen name="education" options={{ title: "Education" }} />
       <Tabs.Screen name="settings" options={{ title: "Settings" }} />
     </Tabs>
   );

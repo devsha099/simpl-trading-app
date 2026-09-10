@@ -13,6 +13,7 @@ import {
 import { CompanyInfoPane } from "./CompanyInfoPane";
 import { FinancialsPane } from "./FinancialsPane";
 import TradeScreen from "./TradeScreen";
+import { AddToWatchlistSheet } from "../components/AddToWatchlistSheet";
 import { colors, fonts, radius } from "../lib/theme";
 
 type Pane = "info" | "trade" | "financials";
@@ -40,6 +41,7 @@ export default function StockScreen() {
   const { symbol: rawSymbol } = useLocalSearchParams<{ symbol: string }>();
   const symbol = (rawSymbol ?? "").toUpperCase();
   const [pane, setPane] = useState<Pane>("trade");
+  const [watchlistOpen, setWatchlistOpen] = useState(false);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -47,7 +49,24 @@ export default function StockScreen() {
 
       <View style={styles.header}>
         <Text style={styles.symbolTitle}>{symbol}</Text>
+        {/* Reachable from every entry point into this screen — a watchlist
+            row, a Holdings row, or Education's search — so a symbol found
+            anywhere can be saved without navigating back to a list first. */}
+        <Pressable
+          style={styles.watchButton}
+          onPress={() => setWatchlistOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel={`Add ${symbol} to a watchlist`}
+        >
+          <Text style={styles.watchButtonText}>+ Watchlist</Text>
+        </Pressable>
       </View>
+
+      <AddToWatchlistSheet
+        symbol={symbol}
+        visible={watchlistOpen}
+        onClose={() => setWatchlistOpen(false)}
+      />
 
       <View style={styles.tabs}>
         {TABS.map((tab) => (
@@ -86,8 +105,25 @@ export default function StockScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.ink },
-  header: { paddingHorizontal: 24, paddingTop: 12, paddingBottom: 4 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
   symbolTitle: { fontFamily: fonts.monoSemiBold, fontSize: 30, color: colors.paper, letterSpacing: 0.3 },
+  watchButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.amberDeep,
+    backgroundColor: colors.inkRaised,
+  },
+  watchButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.amberSoft },
   tabs: {
     flexDirection: "row",
     marginHorizontal: 20,

@@ -118,7 +118,51 @@ const toSnapshot = (symbol: string, raw: RawSnapshot): Snapshot => {
   return { symbol, lastPrice, previousClose, changePercent };
 };
 
+/** One daily bar, trimmed to what performance math needs. */
+export type DailyBar = { date: string; close: number };
+
+type RawBar = { t: string; c: number };
+type BarsResponse = { bars: Record<string, RawBar[]> | null; next_page_token: string | null };
+
 export const alpacaData = {
+  /**
+   * Split-adjusted daily closes for many symbols at once, from `start` to now.
+   *
+   * `adjustment=split` matters: without it a stock that split mid-window shows
+   * a fake ~50% "loss" on every return calculation. Dividends are deliberately
+   * NOT adjusted for — these feed a price-return figure, and quietly showing
+   * total return under a "1 Year" label would overstate what a holder saw in
+   * their own account.
+   *
+   * Alpaca caps a response at 10,000 bars and pages the rest behind
+   * next_page_token, so a year of daily data tops out around 35 symbols per
+   * page — callers batch, and this follows the tokens until a batch is whole.
+   */
+  getDailyBars: async (symbols: string[], start: string): Promise<Record<string, DailyBar[]>> => {
+    const out: Record<string, DailyBar[]> = {};
+    let pageToken: string | null = null;
+
+    do {
+      const params = new URLSearchParams({
+        symbols: symbols.join(","),
+        timeframe: "1Day",
+        start,
+        limit: "10000",
+        adjustment: "split",
+      });
+      if (pageToken) params.set("page_token", pageToken);
+
+      const page = (await alpacaDataFetch(`/v2/stocks/bars?${params.toString()}`)) as BarsResponse;
+      for (const [symbol, bars] of Object.entries(page.bars ?? {})) {
+        // A paged symbol arrives in chunks; append rather than replace.
+        (out[symbol] ??= []).push(...bars.map((b) => ({ date: b.t.slice(0, 10), close: b.c })));
+      }
+      pageToken = page.next_page_token;
+    } while (pageToken);
+
+    return out;
+  },
+
   /**
    * Quote + last trade together, with a reliability flag — what the
    * per-symbol trade screen actually polls. Fetches both in parallel since
