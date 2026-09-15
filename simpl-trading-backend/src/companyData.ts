@@ -6,6 +6,7 @@ import {
   type StatementKind,
   type Unit,
 } from "./data/statementLayout.js";
+import { FLOW_BUILDERS, type FlowGraph } from "./data/statementFlow.js";
 
 /**
  * Per-symbol cache in front of Finnhub — company profile and fundamentals
@@ -132,6 +133,16 @@ export type Statements = {
   periods: string[];
   sections: StatementSection[];
   memo: StatementRow[];
+  /**
+   * The same period's figures as a flow graph (data/statementFlow.ts), for
+   * the premium Sankey view. Values in real dollars, like `sections`. Null
+   * for a period the graph can't be drawn from (no revenue, no total
+   * assets). Shipped alongside the table rather than behind a separate
+   * gated endpoint: it's a re-arrangement of the free figures above, so
+   * there is nothing to protect server-side — the paywall gates the
+   * rendering, which is where the value is.
+   */
+  flow: Record<string, FlowGraph | null>;
 };
 
 // A decade of history is far more than a phone screen needs, and 20+ period
@@ -209,6 +220,22 @@ export async function getStatements(
       // rendering an empty heading.
       .filter((section) => section.rows.length > 0);
 
+    // Flow values scale here too, so the graph and the table agree to the
+    // dollar — a Sankey ribbon and its table row must never disagree.
+    const buildFlow = FLOW_BUILDERS[statement];
+    const flow: Record<string, FlowGraph | null> = {};
+    for (const { period, raw } of periods) {
+      const graph = buildFlow(raw);
+      flow[period] = graph
+        ? {
+            nodes: graph.nodes.map((n) =>
+              n.reported === undefined ? n : { ...n, reported: n.reported * SCALE.currency },
+            ),
+            links: graph.links.map((l) => ({ ...l, value: l.value * SCALE.currency })),
+          }
+        : null;
+    }
+
     data = {
       symbol,
       statement,
@@ -217,6 +244,7 @@ export async function getStatements(
       periods: periods.map((p) => p.period),
       sections,
       memo: layout.memo.map((item) => buildRow(item, periods)).filter((r): r is StatementRow => r !== null),
+      flow,
     };
   }
 

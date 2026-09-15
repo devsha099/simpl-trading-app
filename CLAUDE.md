@@ -17,9 +17,10 @@ day-trading apps.
 - **Core loop:** search a stock → buy it → hold it. That's the whole app.
 - **Deliberately NOT included:** advanced charts, dozens of metrics, options, margin,
   day-trading tooling, social feeds, anything that encourages frequent trading.
-- **Business model:** low-cost yearly subscription (~$20–30/yr) via RevenueCat. Not
-  aiming to be a billion-dollar company; a sustainable app with tens of thousands of
-  users is the goal.
+- **Business model:** subscription via RevenueCat — **$6.99/mo or $49.99/yr** (set
+  2026-09-15, superseding the earlier ~$20–30/yr figure; the display prices live in
+  one constant, `lib/premium.ts`). Not aiming to be a billion-dollar company; a
+  sustainable app with tens of thousands of users is the goal.
 
 Minimalism is the product and the brand — the *product* stays narrow, not the UI.
 
@@ -172,10 +173,11 @@ and navigate directly instead of relying on the listener (§12).
   just a second copy that can drift).
 - **Investment-profile data is KYC-adjacent, not casual app data**: pushed to Alpaca
   via PATCH first, saved locally only if accepted, so the two can't drift.
-- **Subscription (~$20–30/yr) via RevenueCat** gates premium *app features*
+- **Subscription ($6.99/mo · $49.99/yr) via RevenueCat** gates premium *app features*
   (IAP-required) — NOT the trading itself (a real-world service, IAP-exempt).
-  Entitlement mirrored to Supabase via webhook. Infrastructure built; what's gated and
-  the paywall's design are still open — see §15.
+  Entitlement mirrored to Supabase via webhook. First gated feature: **Simpl
+  Financials** (§20), behind a custom Terminal Amber paywall rather than RevenueCat's
+  hosted UI.
 - **Donations deprioritized** (awkward on mobile stores); subscription is the revenue
   pillar.
 
@@ -193,7 +195,8 @@ Installed: `@supabase/supabase-js`, `zod`, `@fastify/cors`, `@fastify/rate-limit
 `@react-native-async-storage/async-storage`, `react-native-url-polyfill`,
 `react-hook-form`+`zod`+`@hookform/resolvers`, `@react-native-picker/picker`,
 `expo-font`+`expo-asset`, `expo-dev-client`+`react-native-purchases` (RevenueCat —
-installing this ended Expo Go compatibility, §12). `expo-secure-store` is installed but
+installing this ended Expo Go compatibility, §12), `react-native-svg` (via `expo
+install`) + `d3-sankey` (the Simpl Financials flow view, §20). `expo-secure-store` is installed but
 not yet wired into the Supabase auth storage adapter (still AsyncStorage).
 Still planned: `@tanstack/react-query`, `nativewind`, `react-native-purchases-ui` (only
 if the hosted Paywall UI is chosen over custom — §15). Later: Plaid.
@@ -243,9 +246,7 @@ workspace/
 │   │       ├── company.ts        public /api/company/:symbol/{profile,financials}
 │   │       └── webhooks/revenuecat.ts  only writer of public.subscriptions
 │   ├── supabase/migrations/
-│   │   ├── 0001_init.sql, 0002_grants.sql, 0003_investor_profiles.sql   applied
-│   │   └── 0004_subscriptions.sql   written, **NOT YET applied** — run via the
-│   │                                Supabase SQL editor before the webhook can write
+│   │   └── 0001_init … 0005_trade_limits.sql   all applied (0004+0005 on 2026-09-01)
 │   ├── .env / .env.example
 │   └── package.json / tsconfig.json
 └── simpl-trading-app/
@@ -322,9 +323,9 @@ No table for KYC PII or holdings — PII passes through to Alpaca and is discard
 holdings live at Alpaca and are fetched live. `GET /api/me/kyc-details` fetches
 address/DOB on-demand for the Profile screen, never returning `tax_id`.
 
-Migrations 0001–0003 applied to the real project. **0004 (subscriptions) is written but
-not yet applied** — needs the Supabase SQL editor. See §12 for why GRANTs and RLS are
-both required (a migration that adds RLS without the base GRANT 403s everything).
+Migrations 0001–0005 are all applied to the real project (0004 and 0005 on
+2026-09-01). See §12 for why GRANTs and RLS are both required (a migration that adds
+RLS without the base GRANT 403s everything).
 
 ---
 
@@ -398,8 +399,9 @@ Every screen is session-derived — no hardcoded account id, no on-device-only d
   Finnhub plan decision.
 - Company Info/Financials: Finnhub's free-tier rate limit (60/min) hasn't been
   stress-tested — fine for dev, revisit before real traffic.
-- RevenueCat: nothing gates on `useEntitlement()` yet; `0004_subscriptions.sql` not
-  applied; no real device purchase test yet (§15).
+- RevenueCat: `useEntitlement()` now gates Simpl Financials (§20), but a purchase can't
+  complete until §15's external accounts exist, and there's been no real device
+  purchase test. The test account is seeded premium directly in `public.subscriptions`.
 
 **Immediate next steps:**
 1. Wire `@tanstack/react-query` into watchlists.
@@ -608,15 +610,16 @@ the only writer of `public.subscriptions`, authenticated by a shared-secret head
 Status is recomputed from the event's expiration timestamp every time, not remembered
 from the event type (a CANCELLATION means "won't renew," not "revoke now") — same
 self-healing philosophy as the Alpaca status sync. `useEntitlement()` reads the table
-via RLS; built, not called from anywhere yet.
+via RLS; its first consumer is `FinancialsPane` (§20). It also exposes `refresh()` for
+the one case focus can't cover — a purchase completed on the gated screen itself.
 
 **Still open:**
-1. **What premium actually gates** — nothing does yet. Must avoid gating the trading
-   loop itself (IAP-exempt, and the core business) or anything advice-adjacent. The
-   Company Info/Financials tabs are a natural fit — real recurring cost to offset
-   (Finnhub), pure data display.
-2. **Custom Terminal Amber paywall vs. RevenueCat's hosted Paywall UI**
-   (`react-native-purchases-ui`, not installed) — speed vs. brand fit.
+1. ~~What premium gates~~ — **decided 2026-09-15: Simpl Financials** (§20), the
+   flow-diagram view of the statements. Pure data display, not advice-adjacent, and
+   it offsets the one real recurring cost (Finnhub). The trading loop stays ungated.
+2. ~~Custom vs hosted paywall~~ — **decided: custom** (`components/PaywallSheet.tsx`),
+   because it can show a real rendering of the thing being sold. RevenueCat package
+   ids it expects: `$rc_monthly`, `$rc_annual` (`lib/premium.ts`).
 3. **External accounts only the founder can create**: RevenueCat project + app
    entries + entitlement/offering; Apple Developer Program ($99/yr) + App Store
    Connect subscription product; Google Play Console ($25 one-time) + product. Not
@@ -829,3 +832,79 @@ planned paywall split — premium turns the same data into proportional flow dia
 - Verified by driving a real browser (§16): 19 checks — all three statements, both
   frequencies, unit conversion, period switching, and the plan-limited state. The one
   console 402 is the JPM path being exercised deliberately, not a fault.
+
+---
+
+## 20. Simpl Financials — the paywalled flow view
+
+The first premium feature (§6, §15): the same statements as §19, drawn as a Sankey.
+Toggle sits beside Annual/Quarterly on the Financials tab; locked (padlock) for a
+non-subscriber and opens the paywall, a switch for a subscriber (defaults ON — it's
+what they paid for; off returns the table). Added 2026-09-15. Prices $6.99/mo ·
+$49.99/yr, one constant in `lib/premium.ts`.
+
+**The graph is built on the BACKEND** (`data/statementFlow.ts`), shipped in the same
+response as the table (`flow[period]`), for the §19 reason: the app must never learn a
+Finnhub field name. Not gated server-side — it's a re-arrangement of the free figures,
+so there's nothing to protect; the paywall gates the *rendering*, which is the value.
+
+**The one rule: every node balances exactly.** A Sankey bar is drawn at max(in, out),
+so any gap is a visibly lopsided bar. Each stage closes its own books and whatever the
+listed components don't explain becomes an explicit "Other" ribbon — thin when the
+filing reconciles, honest-sized when it doesn't. Audited across all 6 covered symbols ×
+3 statements × 10 periods: worst imbalance 1.1e-16. Balance sheet and cash flow have
+NO residuals; income-statement residuals that remain are real unitemised one-offs
+(Apple's 2024 EU tax charge, Microsoft's 2018 TCJA charge, Pfizer 2017–19).
+
+**Things the audit caught that reading the code would not have:**
+- The parent→child ribbon must carry what the PARENT HAS LEFT, not the child's
+  reported value — income sources join the child directly, so sizing by the child
+  double-counted them and Operating Income came out narrower than its outflows.
+- Residuals leave from the PARENT, so the child bar always equals the filed figure.
+  Peeling them off the child drew Apple's net income at $104B instead of $93.7B.
+- `cashDividendsPaid` was missing: MSFT/WMT/AAPL/PFE pay $6–22B a year and every one
+  showed as an "Other" ribbon a fifth the size of the chart. Placed by magnitude, not
+  sign — dividends are always money out. `longTermInvestments` (Apple's single largest
+  asset, $77.7B) and `deferredIncomeTax` (Walmart, $16.5B) likewise.
+- Operating cash flow is NOT decomposed — Finnhub's sub-items overlap (SBC appears
+  both alone and inside "other non-cash"), so itemising manufactures a fake residual.
+- Loss years: a negative stage can't be a bar. The uncovered shortfall becomes a rust
+  "… Loss" source on the left funding the expenses (the classic drawing), and stage
+  nodes carry `reported` so the LABEL is the filed figure while the bar shows
+  throughput — TSLA 2017 labelled Gross Profit "$3.85B" (profit + loss ribbon) until
+  this; the filing says $2.22B.
+
+**Renderer** (`components/SankeyChart.tsx`): d3-sankey for layout (pure geometry, runs
+on native and web), react-native-svg to draw. Ribbons are gradients source→target so
+money is followed by hue: amber = the company's own profit path, green = in from
+elsewhere, rust = out (and a loss on the left), grey = unitemised. Labels are drawn
+twice (dark stroke, then fill) — SVG paint-order isn't on native and text over a
+ribbon is unreadable without a halo.
+- **Column membership by x-position, not `depth`.** `sankeyJustify` moves sinks to the
+  last column but leaves `depth` where the path put it, so a depth test called every
+  sink a middle stage and stacked two-line labels on 3 px bars. First/last columns
+  label to the right (last into a reserved 132 px margin); middle stages label
+  above/below, centred, so no two columns share a horizontal band.
+- Rendered at clamp(container, 640, 900) in a horizontal ScrollView — a five-stage
+  flow needs ~600 px to label; on a phone it pans rather than crushes.
+- Values are NOT coloured by sign, same reasoning as §19.
+
+**Paywall** (`components/PaywallSheet.tsx`): a real rendering of TSLA's income
+statement (`lib/tslaExampleFlow.ts`, a snapshot generated from the backend's own
+builder so it can't drift from what subscribers get), then plan cards, then a separate
+Subscribe button — two steps because it's a money action. `purchasePremium()` runs the
+real RevenueCat flow and NEVER marks the user premium itself; on success the webhook
+writes `public.subscriptions` and `useEntitlement().refresh()` re-reads it. Until §15's
+external accounts exist (and always on web/Expo Go) it reports "Purchases aren't
+available in this build yet" rather than faking success — verified.
+- **The test account is seeded premium directly** in `public.subscriptions` via the
+  service-role key — the same path the webhook uses, a test seed, not a bypass. Flip
+  with a one-row update to see the locked state.
+- A horizontal ScrollView inside an `alignItems:center` parent sizes to its content
+  and overflows BOTH edges instead of scrolling — the paywall preview clipped Revenue
+  on the left until the ScrollView got `alignSelf:"stretch"`.
+- Verified by driving a real browser (§16): 34 checks across locked and unlocked
+  suites, 0 runtime errors — lock, paywall (verbatim headline, both prices, example
+  Sankey, disclosure, honest purchase failure, close), default-on flow for a
+  subscriber, all three statements, toggle off/on, the 2017 loss year, Apple 2024's
+  net income exact with its one-off as a ribbon, and phone width.

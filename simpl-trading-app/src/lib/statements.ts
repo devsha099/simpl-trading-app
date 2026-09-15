@@ -30,6 +30,17 @@ export type StatementRow = {
 
 export type StatementSection = { title: string | null; rows: StatementRow[] };
 
+/** A node in the premium flow view. `kind` drives colour, nothing else. */
+export type FlowNode = {
+  id: string;
+  label: string;
+  kind: "stage" | "expense" | "income" | "loss" | "other";
+  /** The filed figure for the label, when it differs from the bar's throughput (loss years). */
+  reported?: number;
+};
+export type FlowLink = { source: string; target: string; value: number };
+export type FlowGraph = { nodes: FlowNode[]; links: FlowLink[] };
+
 export type Statements = {
   symbol: string;
   statement: StatementKind;
@@ -38,6 +49,8 @@ export type Statements = {
   periods: string[];
   sections: StatementSection[];
   memo: StatementRow[];
+  /** Per period; null when that period can't be drawn (see backend). */
+  flow: Record<string, FlowGraph | null>;
 };
 
 export class StatementsUnavailable extends Error {

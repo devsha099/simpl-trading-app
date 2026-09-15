@@ -14,7 +14,7 @@ import { supabase } from "../lib/supabase";
  * TradeScreen: a purchase made elsewhere (or a renewal/expiration landing
  * via webhook) shouldn't require a full app relaunch to reflect here.
  */
-export function useEntitlement(): { isPremium: boolean; loading: boolean } {
+export function useEntitlement(): { isPremium: boolean; loading: boolean; refresh: () => Promise<void> } {
   const [isPremium, setIsPremium] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -43,5 +43,8 @@ export function useEntitlement(): { isPremium: boolean; loading: boolean } {
     }, [load]),
   );
 
-  return { isPremium, loading };
+  // `refresh` exists for the one moment focus can't cover: a purchase
+  // completed on the very screen that's gated. The screen doesn't lose
+  // focus, so nothing would re-read the row the webhook just wrote.
+  return { isPremium, loading, refresh: load };
 }
