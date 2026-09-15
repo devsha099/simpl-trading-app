@@ -1,4 +1,11 @@
 import { finnhub } from "./finnhub.js";
+import {
+  STATEMENT_LAYOUTS,
+  type Frequency,
+  type LineItem,
+  type StatementKind,
+  type Unit,
+} from "./data/statementLayout.js";
 
 /**
  * Per-symbol cache in front of Finnhub — company profile and fundamentals
@@ -99,5 +106,120 @@ export async function getBasicFinancials(rawSymbol: string): Promise<BasicFinanc
         }
       : null;
   financialsCache.set(symbol, { data, at: Date.now() });
+  return data;
+}
+
+// --- full statements --------------------------------------------------------
+
+export type StatementRow = {
+  key: string;
+  label: string;
+  unit: Unit;
+  indent: boolean;
+  emphasis: "subtotal" | "total" | null;
+  /** period-end date -> value, already in real units. */
+  values: Record<string, number | null>;
+};
+
+export type StatementSection = { title: string | null; rows: StatementRow[] };
+
+export type Statements = {
+  symbol: string;
+  statement: StatementKind;
+  frequency: Frequency;
+  title: string;
+  /** Period-end dates, newest first. */
+  periods: string[];
+  sections: StatementSection[];
+  memo: StatementRow[];
+};
+
+// A decade of history is far more than a phone screen needs, and 20+ period
+// chips is a scroll, not a feature. Quarterly gets more entries for the same
+// span of time.
+const MAX_PERIODS: Record<Frequency, number> = { annual: 10, quarterly: 12 };
+
+// Finnhub reports monetary figures and share counts in MILLIONS. Converting
+// here — the single site — means nothing downstream carries the scale, the
+// same rule §14 already sets for market cap.
+const SCALE: Record<Unit, number> = {
+  currency: 1_000_000,
+  shares: 1_000_000,
+  perShare: 1,
+  ratio: 1,
+};
+
+const statementsCache = new Map<string, { data: Statements | null; at: number }>();
+
+function buildRow(item: LineItem, periods: { period: string; raw: Record<string, unknown> }[]): StatementRow | null {
+  const unit = item.unit ?? "currency";
+  const values: Record<string, number | null> = {};
+  let anyPresent = false;
+
+  for (const { period, raw } of periods) {
+    const n = asNumber(raw[item.key]);
+    if (n !== null) anyPresent = true;
+    values[period] = n === null ? null : n * SCALE[unit];
+  }
+
+  // A line item absent from EVERY period isn't rendered at all — a company
+  // with no R&D shouldn't show an "R&D — " row implying the data is missing.
+  // Absent in only some periods still renders, since a gap in a series is
+  // real information.
+  if (!anyPresent) return null;
+
+  return {
+    key: item.key,
+    label: item.label,
+    unit,
+    indent: item.indent ?? false,
+    emphasis: item.emphasis ?? null,
+    values,
+  };
+}
+
+export async function getStatements(
+  rawSymbol: string,
+  statement: StatementKind,
+  frequency: Frequency,
+): Promise<Statements | null> {
+  const symbol = rawSymbol.trim().toUpperCase();
+  const cacheKey = `${symbol}:${statement}:${frequency}`;
+  const cached = statementsCache.get(cacheKey);
+  if (cached && isFresh(cached.at)) return cached.data;
+
+  const raw = await finnhub.getFinancialStatements(symbol, statement, frequency);
+  const reported = (raw.financials ?? [])
+    .filter((p): p is typeof p & { period: string } => typeof p.period === "string")
+    .slice(0, MAX_PERIODS[frequency]);
+
+  let data: Statements | null = null;
+  if (reported.length > 0) {
+    const layout = STATEMENT_LAYOUTS[statement];
+    const periods = reported.map((p) => ({ period: p.period, raw: p as Record<string, unknown> }));
+
+    const sections = layout.sections
+      .map((section) => ({
+        title: section.title ?? null,
+        rows: section.items
+          .map((item) => buildRow(item, periods))
+          .filter((r): r is StatementRow => r !== null),
+      }))
+      // A section whose every line item is absent disappears rather than
+      // rendering an empty heading.
+      .filter((section) => section.rows.length > 0);
+
+    data = {
+      symbol,
+      statement,
+      frequency,
+      title: layout.title,
+      periods: periods.map((p) => p.period),
+      sections,
+      memo: layout.memo.map((item) => buildRow(item, periods)).filter((r): r is StatementRow => r !== null),
+    };
+  }
+
+  statementsCache.set(cacheKey, { data, at: Date.now() });
   return data;
 }

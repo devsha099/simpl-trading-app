@@ -132,10 +132,12 @@ and navigate directly instead of relying on the listener (§12).
     don't have (§14). See §18. Formerly "Research"; will also hold
     financial-education videos.
   - **Settings** — read-only **Profile** + Sign Out.
-- **The stock screen** — reached from a watchlist row or a Holdings row, one screen per
-  symbol with a 3-way switcher: **Company Info**, **Trade** (landing tab — bid/ask,
-  order form, Buy/Sell, Your Position card), **Financials**. Company Info/Financials
-  come from Finnhub, not Alpaca (Alpaca has no fundamentals data — §13).
+- **The stock screen** — reached from a watchlist row, a Holdings row, or Education's
+  search, one screen per symbol with a 3-way switcher: **Company Info**, **Trade**
+  (landing tab — bid/ask, order form, Buy/Sell, Your Position card), **Financials**
+  (full income statement / balance sheet / cash flow, own sub-switcher — §19). Plus a
+  **+ Watchlist** button in the header (§18). Company Info/Financials come from
+  Finnhub, not Alpaca (Alpaca has no fundamentals data — §13).
 
 ---
 
@@ -343,6 +345,9 @@ both required (a migration that adds RLS without the base GRANT 403s everything)
 - `GET /api/company/:symbol/profile`, `/financials` — Finnhub-backed (§14). 404 if no
   data, 503 if `FINNHUB_API_KEY` unset. Rate-limited 30/min (Finnhub's own cap is
   60/min for the whole app).
+- `GET /api/company/:symbol/statements?statement=ic|bs|cf&freq=annual|quarterly` — full
+  standardized statements, all periods in one response (§19). **402** with
+  `availableSymbols` when the symbol is outside the Finnhub plan's allowlist.
 
 **User-aware** (account id always derived from `req.user.id`):
 - `POST /api/me/onboard` — idempotent KYC submission; name/phone/email come from
@@ -772,3 +777,55 @@ the index changes (a few times a year).
   switcher re-ranking, and an unknown section id showing not-found. One apparent
   failure was the test's own `.first()` landing on the alphabetical S&P 500 list,
   which correctly has no window switcher; confirmed by screenshot before "fixing" it.
+
+---
+
+## 19. Full financial statements (Financials tab)
+
+Income statement / balance sheet / cash flow, every line item, from Finnhub's
+**standardized** `/stock/financials` endpoint. Added 2026-09-15, replacing the
+eight-ratio summary that was there before.
+
+**Why this doesn't contradict §1's "no dozens of metrics."** That rule still holds for
+*ratios* — a wall of P/E variants is noise. A statement is a different object: one
+structured document the company actually files, read top to bottom, where the whole
+point is that it's complete and the subtotals reconcile. Showing eight numbers out of
+it was the incomplete version, not the minimal one. This is also the free tier of the
+planned paywall split — premium turns the same data into proportional flow diagrams.
+
+- **Standardized, not `financials-reported`.** As-reported data uses raw us-gaap
+  concepts that differ per filer (JPM's balance sheet shares almost no keys with
+  AAPL's), so it can't drive a generic layout. Verified TSLA reconciles exactly:
+  revenue 94,827 − COGS 77,733 = 17,094 gross; assets 137,806 = liabilities 55,669 +
+  equity 82,137; operating 14,747 − investing 15,478 + financing 1,139 + FX 171 = 579
+  change in cash.
+- **The layout lives on the BACKEND** (`data/statementLayout.ts`) — which fields, in
+  what order, under what label, with what unit. companyData.ts is already documented as
+  the boundary keeping the app away from Finnhub's field names, and a statement layout
+  is exactly that mapping. The app renders sections it's handed and never learns
+  `sgaExpense` exists.
+- **Finnhub reports money AND share counts in millions**; both are scaled to real units
+  once, in `companyData.ts`. `perShare`/`ratio` units are NOT scaled — formatting EPS as
+  "$1.08M" is the bug this prevents.
+- **A line item absent from every period is dropped**, and a section whose items are all
+  absent disappears. A company with no R&D shouldn't show "R&D —" implying missing data.
+  Absent in *some* periods still renders; a gap in a series is real information.
+- **Values are not colored by sign here**, unlike the P&L screens. Negative capex or
+  accumulated depreciation is normal statement mechanics, not a loss, and rust-on-
+  negative would read as "something is wrong" on rows where nothing is.
+- **Memo rows ("Also reported") are separate from the waterfall** — they're real figures
+  that don't feed a subtotal. `interestIncomeExpense` is the net figure inside the
+  arithmetic; `interestExpense` is gross detail beside it. Listing them inline would
+  imply they sum.
+- One period at a time with chips, not a years × rows grid — 40 rows × 10 columns does
+  not survive a 430px phone. All periods ship in one response so switching is instant.
+  Capped at 10 annual / 12 quarterly.
+- **Only 6 symbols work on the current key** (AAPL, MSFT, NVDA, TSLA, WMT, PFE);
+  everything else 403s. The route turns that into a **402 + `availableSymbols`**. That
+  list is a backend constant on purpose — it's a billing-plan fact, and hardcoding it in
+  the app would need a mobile release to correct when the plan changes. Delete it and
+  the field when the plan covers the market. Finnhub 403s identically for "outside your
+  plan" and "no such symbol," so the message can't claim the company is unknown.
+- Verified by driving a real browser (§16): 19 checks — all three statements, both
+  frequencies, unit conversion, period switching, and the plan-limited state. The one
+  console 402 is the JPM path being exercised deliberately, not a fault.

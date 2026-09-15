@@ -72,10 +72,39 @@ export type RawBasicFinancials = {
   metric?: Record<string, number | string | undefined>;
 };
 
+/**
+ * One period of a standardized statement. `period` is the period-end date
+ * (YYYY-MM-DD); every other key is a line item whose name is consistent
+ * ACROSS companies — that consistency is the whole reason this endpoint is
+ * used instead of `financials-reported`, whose raw us-gaap concepts differ
+ * per filer (a bank's balance sheet shares almost no keys with a retailer's).
+ * The key set still varies per company — a company with no R&D simply has no
+ * `researchDevelopment` key — so every read is optional.
+ */
+export type RawStatementPeriod = { period?: string; year?: number } & Record<
+  string,
+  number | string | undefined
+>;
+
+export type RawFinancialStatements = { financials?: RawStatementPeriod[] };
+
 export const finnhub = {
   getCompanyProfile: (symbol: string) =>
     finnhubFetch(`/stock/profile2?symbol=${encodeURIComponent(symbol)}`) as Promise<RawCompanyProfile>,
 
   getBasicFinancials: (symbol: string) =>
     finnhubFetch(`/stock/metric?symbol=${encodeURIComponent(symbol)}&metric=all`) as Promise<RawBasicFinancials>,
+
+  /**
+   * Standardized income statement / balance sheet / cash flow.
+   *
+   * A PAID endpoint, and a narrow one on the current key: it 403s for any
+   * symbol outside the plan's allowlist, and 403s identically for a symbol
+   * that doesn't exist — so a rejection here can't be read as "no such
+   * company" (see routes/company.ts, which surfaces it as a plan limit).
+   */
+  getFinancialStatements: (symbol: string, statement: string, freq: string) =>
+    finnhubFetch(
+      `/stock/financials?symbol=${encodeURIComponent(symbol)}&statement=${statement}&freq=${freq}`,
+    ) as Promise<RawFinancialStatements>,
 };
