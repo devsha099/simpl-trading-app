@@ -209,6 +209,7 @@ export default function TransferScreen() {
                     setAmount(cleaned);
                   }}
                   keyboardType="decimal-pad"
+                  maxLength={12}
                   placeholder="0.00"
                   placeholderTextColor={colors.paperDim}
                   selectionColor={colors.amber}

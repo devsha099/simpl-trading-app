@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Picker } from "@react-native-picker/picker";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Svg, { Path, Rect } from "react-native-svg";
 import { PaywallSheet } from "../components/PaywallSheet";
 import { SankeyChart } from "../components/SankeyChart";
+import { SheetSelect } from "../components/SheetSelect";
 import { useEntitlement } from "../hooks/useEntitlement";
 import {
   fetchStatements,
@@ -154,19 +154,18 @@ export function FinancialsPane({ symbol }: { symbol: string }) {
       {data && data.periods.length > 0 ? (
         <View style={styles.periodRow}>
           <Text style={styles.periodLabel}>Period</Text>
-          <View style={styles.pickerWrap}>
-            <Picker
-              selectedValue={active ?? ""}
-              onValueChange={(v) => setPeriod(String(v))}
-              style={styles.picker}
-              dropdownIconColor={colors.amber}
-              mode="dropdown"
-            >
-              {data.periods.map((p) => (
-                <Picker.Item key={p} label={formatPeriod(p, data.frequency)} value={p} color={colors.paper} />
-              ))}
-            </Picker>
-          </View>
+          <SheetSelect
+            compact
+            value={active ?? ""}
+            onValueChange={setPeriod}
+            options={data.periods.map((p) => ({
+              value: p,
+              label: formatPeriod(p, data.frequency),
+              description: `Period ending ${formatPeriodLong(p)}`,
+            }))}
+            title="Reporting period"
+            subtitle={`Which ${data.frequency === "annual" ? "fiscal year" : "quarter"} to show.`}
+          />
         </View>
       ) : null}
 

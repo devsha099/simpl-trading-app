@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { alpaca } from "../../alpaca.js";
 import { requireAuth } from "../../auth.js";
 import { getAccountForUser } from "../../db/accounts.js";
+import { RATE_LIMITS } from "../../rateLimits.js";
 
 type AlpacaAccountDetails = {
   identity?: { date_of_birth?: string };
@@ -22,7 +23,7 @@ type AlpacaAccountDetails = {
  * response, which also includes tax_id/SSN.
  */
 export async function kycDetailsRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/kyc-details", { preHandler: requireAuth }, async (req, reply) => {
+  app.get("/kyc-details", { preHandler: requireAuth, ...RATE_LIMITS.accountRead }, async (req, reply) => {
     const account = await getAccountForUser(req.user!.id);
     if (!account) return reply.code(404).send({ error: "not_onboarded" });
 

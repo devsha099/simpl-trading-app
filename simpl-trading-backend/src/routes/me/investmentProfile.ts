@@ -5,6 +5,7 @@ import { getAccountForUser } from "../../db/accounts.js";
 import { saveInvestorProfileForUser } from "../../db/investorProfiles.js";
 import { FINANCIAL_BRACKETS } from "../../data/financialProfile.js";
 import { investmentProfileSchema } from "../../schemas/investmentProfile.js";
+import { RATE_LIMITS } from "../../rateLimits.js";
 
 function bracketByLabel(label: string) {
   const bracket = FINANCIAL_BRACKETS.find((b) => b.label === label);
@@ -19,7 +20,7 @@ function bracketByLabel(label: string) {
  * screen for that step, not an optional add-on.
  */
 export async function investmentProfileRoutes(app: FastifyInstance): Promise<void> {
-  app.post("/investment-profile", { preHandler: requireAuth }, async (req, reply) => {
+  app.post("/investment-profile", { preHandler: requireAuth, ...RATE_LIMITS.investmentProfile }, async (req, reply) => {
     const userId = req.user!.id;
 
     const account = await getAccountForUser(userId);

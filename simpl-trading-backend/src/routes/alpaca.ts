@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { alpacaData } from "../alpaca-data.js";
 import { lookupAsset, searchAssets } from "../assetSearch.js";
+import { RATE_LIMITS } from "../rateLimits.js";
 
 /**
  * Market-data routes under /api/alpaca. NOT account-scoped — quotes and
@@ -19,7 +20,7 @@ export async function alpacaRoutes(app: FastifyInstance): Promise<void> {
    * ticks). The client polls this on an interval — there's no
    * push/streaming here, just a plain GET.
    */
-  app.get<{ Params: { symbol: string } }>("/quotes/:symbol", async (req) => {
+  app.get<{ Params: { symbol: string } }>("/quotes/:symbol", RATE_LIMITS.marketData, async (req) => {
     return alpacaData.getQuoteDetail(req.params.symbol);
   });
 
@@ -27,7 +28,7 @@ export async function alpacaRoutes(app: FastifyInstance): Promise<void> {
    * Last traded price + %-change since previous close, for several symbols
    * in one call. ?symbols=AAPL,MSFT — used for watchlist rows.
    */
-  app.get<{ Querystring: { symbols?: string } }>("/snapshots", async (req, reply) => {
+  app.get<{ Querystring: { symbols?: string } }>("/snapshots", RATE_LIMITS.marketData, async (req, reply) => {
     const symbols = (req.query.symbols ?? "")
       .split(",")
       .map((s) => s.trim().toUpperCase())
@@ -44,7 +45,7 @@ export async function alpacaRoutes(app: FastifyInstance): Promise<void> {
    * ranked (exact symbol first). Empty query returns [] rather than 400 —
    * the client calls this reactively as the user types.
    */
-  app.get<{ Querystring: { q?: string } }>("/assets/search", async (req) => {
+  app.get<{ Querystring: { q?: string } }>("/assets/search", RATE_LIMITS.assetSearch, async (req) => {
     return searchAssets(req.query.q ?? "");
   });
 
@@ -54,7 +55,7 @@ export async function alpacaRoutes(app: FastifyInstance): Promise<void> {
    * next-step, and the fix for untradable garbage like "BAAAAA" getting
    * added with no validation at all).
    */
-  app.get<{ Params: { symbol: string } }>("/assets/:symbol", async (req, reply) => {
+  app.get<{ Params: { symbol: string } }>("/assets/:symbol", RATE_LIMITS.assetLookup, async (req, reply) => {
     const asset = await lookupAsset(req.params.symbol);
     if (!asset) {
       return reply.code(404).send({

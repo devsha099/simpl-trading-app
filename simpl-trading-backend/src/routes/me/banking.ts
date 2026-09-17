@@ -4,6 +4,7 @@ import { requireAuth } from "../../auth.js";
 import { getAccountForUser } from "../../db/accounts.js";
 import { getSupabaseAdmin } from "../../supabase.js";
 import { createTransferSchema, linkBankSchema } from "../../schemas/banking.js";
+import { RATE_LIMITS } from "../../rateLimits.js";
 
 /**
  * Banking: link/unlink a bank (Alpaca ACH relationship) and move money
@@ -82,7 +83,7 @@ function toTransferView(t: AlpacaTransfer) {
 
 export async function bankingRoutes(app: FastifyInstance): Promise<void> {
   /** The linked bank account, or { bank: null } if none is linked. */
-  app.get("/bank", { preHandler: requireAuth }, async (req, reply) => {
+  app.get("/bank", { preHandler: requireAuth, ...RATE_LIMITS.accountRead }, async (req, reply) => {
     const account = await getAccountForUser(req.user!.id);
     if (!account) return reply.code(404).send({ error: "not_onboarded" });
 
@@ -95,7 +96,7 @@ export async function bankingRoutes(app: FastifyInstance): Promise<void> {
    * relationship per account, so an existing live link is a 409 — the app
    * tells the user to remove the current bank first.
    */
-  app.post("/bank", { preHandler: requireAuth }, async (req, reply) => {
+  app.post("/bank", { preHandler: requireAuth, ...RATE_LIMITS.bankMutation }, async (req, reply) => {
     const account = await getAccountForUser(req.user!.id);
     if (!account) return reply.code(404).send({ error: "not_onboarded" });
 
@@ -139,7 +140,7 @@ export async function bankingRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /** Unlink the bank. The relationship id is looked up, never client-sent. */
-  app.delete("/bank", { preHandler: requireAuth }, async (req, reply) => {
+  app.delete("/bank", { preHandler: requireAuth, ...RATE_LIMITS.bankMutation }, async (req, reply) => {
     const account = await getAccountForUser(req.user!.id);
     if (!account) return reply.code(404).send({ error: "not_onboarded" });
 
@@ -153,7 +154,7 @@ export async function bankingRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /** Deposit/withdrawal history, newest first. */
-  app.get("/transfers", { preHandler: requireAuth }, async (req, reply) => {
+  app.get("/transfers", { preHandler: requireAuth, ...RATE_LIMITS.accountRead }, async (req, reply) => {
     const account = await getAccountForUser(req.user!.id);
     if (!account) return reply.code(404).send({ error: "not_onboarded" });
 
@@ -178,10 +179,8 @@ export async function bankingRoutes(app: FastifyInstance): Promise<void> {
     "/transfers",
     {
       preHandler: requireAuth,
-      // Tighter than the global default (index.ts) — this moves real money
-      // between a bank and a brokerage account. No human initiates 10
-      // transfers a minute.
-      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+      // Moves real money — see rateLimits.ts for how every cap is sized.
+      ...RATE_LIMITS.transfer,
     },
     async (req, reply) => {
       const account = await getAccountForUser(req.user!.id);
@@ -248,7 +247,7 @@ export async function bankingRoutes(app: FastifyInstance): Promise<void> {
    */
   app.delete<{ Params: { id: string } }>(
     "/transfers/:id",
-    { preHandler: requireAuth },
+    { preHandler: requireAuth, ...RATE_LIMITS.transfer },
     async (req, reply) => {
       const account = await getAccountForUser(req.user!.id);
       if (!account) return reply.code(404).send({ error: "not_onboarded" });

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { getBasicFinancials, getCompanyProfile, getStatements } from "../companyData.js";
 import { FinnhubError } from "../finnhub.js";
 import { isStatementKind, type Frequency, type StatementKind } from "../data/statementLayout.js";
+import { RATE_LIMITS } from "../rateLimits.js";
 
 /**
  * Company profile + fundamentals, under /api/company. Public, not
@@ -17,7 +18,7 @@ import { isStatementKind, type Frequency, type StatementKind } from "../data/sta
  * misses the cache every time and would otherwise drain the whole quota
  * unauthenticated. 30/min still covers any plausible human browsing.
  */
-const COMPANY_RATE_LIMIT = { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } };
+const COMPANY_RATE_LIMIT = RATE_LIMITS.companyData;
 
 /**
  * Symbols the current Finnhub key can actually pull full statements for.

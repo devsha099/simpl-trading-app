@@ -16,7 +16,10 @@ import { revenuecatWebhookRoutes } from "./routes/webhooks/revenuecat.js";
 import { AlpacaError } from "./alpaca.js";
 import { FinnhubError } from "./finnhub.js";
 
-const app = Fastify({ logger: true });
+// trustProxy is what makes req.ip trustworthy, which is what makes IP-keyed
+// rate limiting mean anything on the unauthenticated routes. See config.ts —
+// it deliberately refuses `true`.
+const app = Fastify({ logger: true, trustProxy: config.trustProxy });
 
 // `methods` must be listed explicitly: @fastify/cors defaults to only the
 // CORS-safelisted GET,HEAD,POST, so a browser preflight rejects DELETE
@@ -59,7 +62,18 @@ app.register(rateLimit, {
   // storm could exhaust its retry budget and silently lose an upgrade. It
   // is already authenticated by a shared secret, and only RevenueCat's own
   // servers know the URL.
-  allowList: (req) => req.url === "/health" || req.url.startsWith("/api/webhooks/"),
+  // /health is the ONLY thing fully exempt — throttling a liveness probe
+  // makes the server look down under load, which is exactly backwards.
+  //
+  // The RevenueCat webhook is NO LONGER exempt. It used to be, reasoning
+  // that a dropped event costs a user their paid entitlement — true, but
+  // "unlimited" is not the only way to avoid that. An unauthenticated
+  // endpoint with no ceiling is a free CPU-burn target for anyone who
+  // learns the URL, and it only takes one leak. It now gets a deliberately
+  // generous cap instead (see webhookLimit below), far above RevenueCat's
+  // real send rate, so normal delivery never sees a 429 and a flood still
+  // has a ceiling.
+  allowList: (req) => req.url === "/health",
   // statusCode is REQUIRED here. Whatever this returns is what the plugin
   // throws, and a plain {error, message} object carries no status — so it
   // fell through to the catch-all below and every rate-limited request came

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { alpaca } from "../../alpaca.js";
 import { requireAuth } from "../../auth.js";
 import { getAccountForUser, updateAccountStatus } from "../../db/accounts.js";
+import { RATE_LIMITS } from "../../rateLimits.js";
 
 /**
  * Onboarding only ever writes account_status once, at creation time — nothing
@@ -12,7 +13,7 @@ import { getAccountForUser, updateAccountStatus } from "../../db/accounts.js";
  * status and self-heal the DB copy when it's changed.
  */
 export async function statusRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/status", { preHandler: requireAuth }, async (req, reply) => {
+  app.get("/status", { preHandler: requireAuth, ...RATE_LIMITS.accountRead }, async (req, reply) => {
     const userId = req.user!.id;
 
     const existing = await getAccountForUser(userId);

@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Picker } from "@react-native-picker/picker";
+import { SheetSelect } from "../../../components/SheetSelect";
 import { InfoTooltip } from "../../../components/InfoTooltip";
 import { apiFetch } from "../../../lib/api";
 import {
@@ -32,6 +32,16 @@ const MARKET_CAP_INFO =
 const RESET_INFO = "Resets your limits back to no limits.";
 const COOLDOWN_INFO =
   "Changes that weaken a limit — raising it, removing it, or switching this off — wait until the next trading day at 9:30 AM ET. Tightening a limit always applies right away.";
+
+/**
+ * The dropdown's options, with "No limit" as a real selectable row. A
+ * placeholder isn't enough on its own: once a floor is chosen there would be
+ * no way back to unlimited without using the Reset button.
+ */
+const MARKET_CAP_OPTIONS_WITH_NONE = [
+  { value: "", label: "No limit", description: "Any company, at any size." },
+  ...MARKET_CAP_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
+];
 
 /**
  * Trade Limits (CLAUDE.md §17) — self-imposed guardrails against weekly churn
@@ -194,21 +204,16 @@ export default function TradeLimitsScreen() {
             <Text style={styles.rowLabel}>Market Cap limit</Text>
             <InfoTooltip text={MARKET_CAP_INFO} label="Market cap limit" />
           </View>
-          <View style={styles.pickerWrapper}>
-            <Picker
-              selectedValue={draft.minMarketCap === null ? "" : String(draft.minMarketCap)}
-              onValueChange={(v) =>
-                setDraft((d) => ({ ...d, minMarketCap: v === "" ? null : Number(v) }))
-              }
-              style={styles.picker}
-              dropdownIconColor={colors.amber}
-            >
-              <Picker.Item label="No limit" value="" color={colors.paperDim} />
-              {MARKET_CAP_OPTIONS.map((o) => (
-                <Picker.Item key={o.value} label={o.label} value={String(o.value)} color={colors.paper} />
-              ))}
-            </Picker>
-          </View>
+          <SheetSelect
+            value={draft.minMarketCap === null ? "" : String(draft.minMarketCap)}
+            onValueChange={(v) =>
+              setDraft((d) => ({ ...d, minMarketCap: v === "" ? null : Number(v) }))
+            }
+            options={MARKET_CAP_OPTIONS_WITH_NONE}
+            placeholder="No limit"
+            title="Market Cap limit"
+            subtitle="You won't be able to buy a company smaller than this. Selling is never blocked."
+          />
         </View>
 
         {/* Cooldown */}

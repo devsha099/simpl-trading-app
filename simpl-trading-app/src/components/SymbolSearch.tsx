@@ -73,6 +73,7 @@ export function SymbolSearch({
         autoCapitalize="characters"
         autoCorrect={false}
         returnKeyType="search"
+        maxLength={12}
       />
 
       {open && query.trim() ? (

@@ -6,6 +6,7 @@ import {
   type Window,
 } from "../marketPerformance.js";
 import { SP500 } from "../data/sp500.js";
+import { RATE_LIMITS } from "../rateLimits.js";
 
 /**
  * Public market-browsing routes behind the Education tab. Unauthenticated for
@@ -51,7 +52,7 @@ export async function marketsRoutes(app: FastifyInstance): Promise<void> {
    * in ONE call — the screen shows a handful of rows per section, so making it
    * fetch each section separately would be several round trips for one view.
    */
-  app.get("/overview", async () => {
+  app.get("/overview", RATE_LIMITS.marketsOverview, async () => {
     const perf = await getMarketPerformance();
     return {
       asOf: perf.asOf,
@@ -93,7 +94,7 @@ export async function marketsRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /** Expanded "Stock Performance" — ?window=1M|3M|YTD|1Y&limit=n */
-  app.get<{ Querystring: { window?: string; limit?: string } }>("/performance", async (req) => {
+  app.get<{ Querystring: { window?: string; limit?: string } }>("/performance", RATE_LIMITS.markets, async (req) => {
     const perf = await getMarketPerformance();
     const window = parseWindow(req.query.window);
     return {
@@ -106,7 +107,7 @@ export async function marketsRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /** Expanded "Sector Performance" — every sector, ranked on ?window. */
-  app.get<{ Querystring: { window?: string } }>("/sectors", async (req) => {
+  app.get<{ Querystring: { window?: string } }>("/sectors", RATE_LIMITS.markets, async (req) => {
     const perf = await getMarketPerformance();
     const window = parseWindow(req.query.window);
     return {
@@ -134,6 +135,7 @@ export async function marketsRoutes(app: FastifyInstance): Promise<void> {
    */
   app.get<{ Querystring: { limit?: string; offset?: string; sector?: string } }>(
     "/companies",
+    RATE_LIMITS.markets,
     async (req) => {
       const perf = await getMarketPerformance();
       const bySymbol = new Map(perf.symbols.map((s) => [s.symbol, s]));

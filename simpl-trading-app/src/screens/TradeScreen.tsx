@@ -43,18 +43,47 @@ type OrderType = "market" | "limit" | "stop";
 type Side = "buy" | "sell";
 type Hours = "regular" | "extended";
 
+/**
+ * Every option carries a line explaining what it DOES — these are the
+ * mechanics of the order, deliberately not guidance on when to use one
+ * (§2: strictly self-directed, no advice, no recommendations). "Only fills
+ * at your price or better" is how a limit order works; "use a limit order
+ * in a volatile market" would be a recommendation, and isn't here.
+ */
 const SIDE_OPTIONS = [
-  { value: "buy", label: "Buy" },
-  { value: "sell", label: "Sell" },
+  { value: "buy", label: "Buy", description: "Open a new position, or add to one you already hold." },
+  { value: "sell", label: "Sell", description: "Reduce or close a position you already hold." },
 ] as const;
 const ORDER_TYPE_OPTIONS = [
-  { value: "market", label: "Market" },
-  { value: "limit", label: "Limit" },
-  { value: "stop", label: "Stop Loss" },
+  {
+    value: "market",
+    label: "Market",
+    description: "Fills right away at the best price currently available. You choose the timing; the market sets the price.",
+  },
+  {
+    value: "limit",
+    label: "Limit",
+    description: "Fills only at the price you set or better. If the market never reaches it, the order doesn't fill.",
+  },
+  {
+    value: "stop",
+    label: "Stop Loss",
+    description: "Sits inactive until the price reaches your trigger, then turns into a market order.",
+  },
 ] as const;
 const HOURS_OPTIONS = [
-  { value: "regular", label: "Regular Hours" },
-  { value: "extended", label: "Extended Hours" },
+  {
+    value: "regular",
+    label: "Regular Hours",
+    note: "9:30 AM – 4:00 PM ET",
+    description: "The main session, when the most shares change hands.",
+  },
+  {
+    value: "extended",
+    label: "Extended Hours",
+    note: "4:00 AM – 8:00 PM ET",
+    description: "Pre-market and after-hours. Far fewer participants, so the gap between bid and ask is usually wider.",
+  },
 ] as const;
 
 // toFixed preserves the sign of a tiny negative even once rounding makes it
@@ -391,6 +420,7 @@ export default function TradeScreen({ symbol }: { symbol: string }) {
           onValueChange={(v) => setSide(v as Side | "")}
           options={SIDE_OPTIONS}
           placeholder="Select side"
+          subtitle="Which direction this order goes."
         />
         <SelectField
           label="Order Type"
@@ -398,6 +428,7 @@ export default function TradeScreen({ symbol }: { symbol: string }) {
           onValueChange={handleOrderTypeChange}
           options={ORDER_TYPE_OPTIONS}
           placeholder="Select order type"
+          subtitle="How your order gets filled."
         />
         {orderType === "limit" ? (
           <SelectField
@@ -406,6 +437,7 @@ export default function TradeScreen({ symbol }: { symbol: string }) {
             onValueChange={(v) => setHours(v as Hours | "")}
             options={HOURS_OPTIONS}
             placeholder="Select hours"
+            subtitle="When your order is eligible to fill. Limit orders only."
           />
         ) : null}
       </View>
@@ -444,6 +476,7 @@ export default function TradeScreen({ symbol }: { symbol: string }) {
             value={amount}
             onChangeText={setAmount}
             keyboardType="decimal-pad"
+            maxLength={12}
             placeholder={buyMode === "dollars" ? "0.00" : "0"}
             placeholderTextColor={colors.paperDim}
             selectionColor={colors.amber}
@@ -463,6 +496,7 @@ export default function TradeScreen({ symbol }: { symbol: string }) {
               value={limitPrice}
               onChangeText={setLimitPrice}
               keyboardType="decimal-pad"
+              maxLength={12}
               placeholder={midPrice ? midPrice.toFixed(2) : "0.00"}
               placeholderTextColor={colors.paperDim}
               selectionColor={colors.amber}
@@ -481,6 +515,7 @@ export default function TradeScreen({ symbol }: { symbol: string }) {
               value={stopPrice}
               onChangeText={setStopPrice}
               keyboardType="decimal-pad"
+              maxLength={12}
               placeholder={midPrice ? midPrice.toFixed(2) : "0.00"}
               placeholderTextColor={colors.paperDim}
               selectionColor={colors.amber}

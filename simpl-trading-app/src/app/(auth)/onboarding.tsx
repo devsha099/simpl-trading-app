@@ -1,10 +1,10 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Picker } from "@react-native-picker/picker";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from "react-native";
 import { z } from "zod";
+import { SheetSelect } from "../../components/SheetSelect";
 import { FormField } from "../../components/FormField";
 import { ToggleField } from "../../components/ToggleField";
 import { useAuthStateContext } from "../../context/AuthStateContext";
@@ -203,14 +203,14 @@ export default function OnboardingScreen() {
           render={({ field }) => (
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>State</Text>
-              <View style={styles.pickerWrapper}>
-                <Picker selectedValue={field.value} onValueChange={field.onChange} style={styles.picker} dropdownIconColor={colors.amber}>
-                  <Picker.Item label="Select a state..." value="" color={colors.paperDim} />
-                  {US_STATES.map((s) => (
-                    <Picker.Item key={s.code} label={`${s.name} (${s.code})`} value={s.code} color={colors.paper} />
-                  ))}
-                </Picker>
-              </View>
+              {/* 50 options, so SheetSelect adds its filter box automatically. */}
+              <SheetSelect
+                value={field.value}
+                onValueChange={field.onChange}
+                options={US_STATES.map((s) => ({ value: s.code, label: `${s.name} (${s.code})` }))}
+                placeholder="Select a state..."
+                title="State"
+              />
               {errors.state ? <Text style={styles.pickerError}>{errors.state.message}</Text> : null}
             </View>
           )}

@@ -908,3 +908,92 @@ available in this build yet" rather than faking success — verified.
   Sankey, disclosure, honest purchase failure, close), default-on flow for a
   subscriber, all three statements, toggle off/on, the 2017 loss year, Apple 2024's
   net income exact with its one-off as a ribbon, and phone width.
+
+---
+
+## 21. Abuse limits & hardening
+
+Rate limiting, input bounds, and proxy trust. Audited and extended 2026-09-17,
+after the first pass (§10) covered only three routes.
+
+**The surface is split, and the smaller half is the backend.** Signup, login,
+password reset and EVERY watchlist write go app -> Supabase directly (§3), so
+Fastify's limiter cannot see them at all. That means:
+- **Postgres is the only place that can bound them** — migration `0006` adds
+  length/shape CHECKs and row-count triggers on `watchlists`, `watchlist_items`
+  and `user_settings`. RLS proves *who* you are; nothing bounded *how much* you
+  could write as yourself, so a signed-in bot could store a 10 MB watchlist name
+  or a million rows and every write was a valid RLS write.
+- **Auth throttling is a Supabase dashboard setting**, not code in this repo.
+  Nothing here can rate-limit `signInWithPassword`.
+
+**Backend caps live in one table** (`rateLimits.ts`), sized by what a request
+COSTS rather than by guessed human behaviour — `/markets/overview` fans out to
+~15 Alpaca calls across 503 symbols on a cold cache, so it gets 30/min while a
+cached sibling gets 60. Every route now carries one; before this pass only
+`POST /orders` and `POST /transfers` did, leaving bank link/unlink, onboarding,
+the investment profile, trade-limit writes and all of `/api/alpaca/*` and
+`/api/markets/*` on the global 300/min alone. Verified live: 40 requests at a
+30/min route gave exactly 30×200 + 10×429, `/health` unaffected.
+
+- **The RevenueCat webhook is no longer exempt from limiting.** It was, on the
+  reasoning that a dropped event costs a user their entitlement — true, but
+  "unlimited" isn't the only way to avoid that. An unauthenticated endpoint with
+  no ceiling is a free CPU-burn target for anyone who learns the URL, and the
+  shared secret is only checked after the body is parsed. It now has a
+  deliberately generous 600/min: far above RevenueCat's real send rate, still a
+  ceiling. `/health` is the only thing fully exempt.
+
+**IP rotation / `trustProxy`.** Unauthenticated routes key on `req.ip`, and both
+the old default and the obvious fix are wrong:
+- Unset behind a proxy, `req.ip` is the PROXY's address for every request, so
+  all traffic shares one bucket and the first burst locks out every user.
+- `trustProxy: true` believes `X-Forwarded-For` from anyone, so a client forges
+  a fresh IP per request and gets an unlimited quota — the rotation bypass,
+  handed out for free.
+So `TRUST_PROXY` takes a proxy IP/CIDR or a hop count, defaults to off, and
+**config.ts throws on `true`** rather than letting it be set by accident.
+Honest limit: none of this stops a distributed botnet across real IPs. That
+needs a WAF in front (Cloudflare or equivalent) — per-IP limits bound one host,
+not a swarm.
+
+**Input bounds.** Every `TextInput` now caps length (only one of eight did).
+Watchlist names cap at 60 to match the DB CHECK exactly, so a user is stopped by
+the keyboard rather than a Postgres error; money fields cap at 12 chars; symbol
+search at 12. Client caps are UX, not security — the DB constraints are what a
+scripted client actually hits.
+
+**Already clean, checked not assumed:** no route trusts a client-supplied
+timestamp, so a device clock cannot skip §17's cooldown — the only date math is
+server-side in `marketTime.ts`. SQL injection isn't reachable (§12): everything
+goes through Supabase's parameterized builder. XSS isn't a class here — React
+Native has no `innerHTML`.
+
+---
+
+## 22. Dropdowns (SheetSelect)
+
+Every dropdown in the app opens as a sheet with per-option explanations, not a
+native picker wheel. Added 2026-09-17, replacing `@react-native-picker/picker`
+at all 13 call sites.
+
+**Why a sheet.** The native `<Picker>` gave a bare list of words with nowhere to
+explain them, which is worst exactly where it matters: "Limit" vs "Stop", or
+"Extended Hours", where the label is the least useful part. It also rendered as
+three different products — a wheel on iOS, a dialog on Android, an HTML
+`<select>` on web. The sheet is one shape everywhere with room to teach.
+
+- **`SelectField` kept its exact prop signature** and became a thin wrapper, so
+  all ten existing call sites (onboarding, investment profile, banking, trade)
+  upgraded without being touched; each can now add `description` per option.
+- **Option copy is MECHANICS, never guidance** (§2). "Fills only at the price
+  you set or better" is how a limit order works; "use a limit order when the
+  market is volatile" would be a recommendation and is not there. A test asserts
+  no advice language ("you should", "recommend", "best for") appears in any sheet.
+- Lists over 12 options get a filter box automatically (states, market caps);
+  shorter ones don't, because a search field above four options is furniture.
+- **"No limit" is a real option row** in the market-cap sheet, not just the
+  trigger's placeholder — a placeholder alone leaves no way back to unlimited
+  without the Reset button.
+- `compact` renders an inline pill trigger for toolbars (the statements period
+  picker) instead of a labelled form field.

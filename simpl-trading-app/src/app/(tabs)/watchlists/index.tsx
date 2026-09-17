@@ -90,6 +90,7 @@ export default function WatchlistsHomeScreen() {
               placeholderTextColor={colors.paperDim}
               selectionColor={colors.amber}
               autoFocus
+              maxLength={60}
               onSubmitEditing={handleCreate}
             />
             <View style={styles.modalActions}>

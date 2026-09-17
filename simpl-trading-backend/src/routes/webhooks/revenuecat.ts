@@ -24,7 +24,16 @@ type RevenueCatEvent = {
  * here IS a real auth.users.id, no separate identity mapping needed.
  */
 export async function revenuecatWebhookRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Body: { api_version?: string; event?: RevenueCatEvent } }>("/revenuecat", async (req, reply) => {
+  app.post<{ Body: { api_version?: string; event?: RevenueCatEvent } }>(
+    "/revenuecat",
+    // Deliberately generous, not exempt. A dropped event costs a user their
+    // paid entitlement, so this must never throttle real delivery — but an
+    // unauthenticated endpoint with NO ceiling is a free CPU-burn target for
+    // anyone who learns the URL, and the shared secret is checked after the
+    // request is already parsed. 600/min is orders of magnitude above
+    // RevenueCat's real send rate and still bounds a flood.
+    { config: { rateLimit: { max: 600, timeWindow: "1 minute" } } },
+    async (req, reply) => {
     if (!config.revenuecatWebhookSecret) {
       app.log.error("REVENUECAT_WEBHOOK_SECRET not set — rejecting webhook");
       return reply.code(503).send({ error: "webhook_not_configured" });
@@ -66,6 +75,7 @@ export async function revenuecatWebhookRoutes(app: FastifyInstance): Promise<voi
       expiresAt,
     });
 
-    return reply.code(200).send({ ok: true });
-  });
+      return reply.code(200).send({ ok: true });
+    },
+  );
 }

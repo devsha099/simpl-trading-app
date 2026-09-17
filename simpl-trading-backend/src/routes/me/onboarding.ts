@@ -4,6 +4,7 @@ import { requireAuth } from "../../auth.js";
 import { getAccountForUser, saveAccountForUser } from "../../db/accounts.js";
 import { getSupabaseAdmin } from "../../supabase.js";
 import { onboardingSchema } from "../../schemas/onboarding.js";
+import { RATE_LIMITS } from "../../rateLimits.js";
 
 /**
  * User-aware routes under /api/me. Account id is ALWAYS derived from the
@@ -17,7 +18,7 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
    * profile, not the client, so KYC can't be submitted under a different
    * identity than the account that's actually logged in.
    */
-  app.post("/onboard", { preHandler: requireAuth }, async (req, reply) => {
+  app.post("/onboard", { preHandler: requireAuth, ...RATE_LIMITS.onboard }, async (req, reply) => {
     const userId = req.user!.id;
 
     const existing = await getAccountForUser(userId);

@@ -6,6 +6,7 @@ import { getTradeLimits } from "../../db/tradeLimits.js";
 import { countRoundTripsThisWeek } from "../../roundTrips.js";
 import { getCompanyProfile } from "../../companyData.js";
 import { formatMarketCap } from "../../data/tradeLimits.js";
+import { RATE_LIMITS } from "../../rateLimits.js";
 
 type Position = {
   symbol: string;
@@ -23,14 +24,14 @@ type Position = {
  * milestone. routes/alpaca.ts is removed once nothing depends on it anymore.
  */
 export async function tradingRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/account", { preHandler: requireAuth }, async (req, reply) => {
+  app.get("/account", { preHandler: requireAuth, ...RATE_LIMITS.accountRead }, async (req, reply) => {
     const account = await getAccountForUser(req.user!.id);
     if (!account) return reply.code(404).send({ error: "not_onboarded" });
     return alpaca.getTradingAccount(account.alpacaAccountId);
   });
 
   /** Current holdings. */
-  app.get("/positions", { preHandler: requireAuth }, async (req, reply) => {
+  app.get("/positions", { preHandler: requireAuth, ...RATE_LIMITS.accountRead }, async (req, reply) => {
     const account = await getAccountForUser(req.user!.id);
     if (!account) return reply.code(404).send({ error: "not_onboarded" });
     return alpaca.getPositions(account.alpacaAccountId);
@@ -40,7 +41,7 @@ export async function tradingRoutes(app: FastifyInstance): Promise<void> {
    * Orders. ?status=open (default) | closed | all — closed is what the
    * Trade History screen uses (filled/canceled/expired orders).
    */
-  app.get<{ Querystring: { status?: string } }>("/orders", { preHandler: requireAuth }, async (req, reply) => {
+  app.get<{ Querystring: { status?: string } }>("/orders", { preHandler: requireAuth, ...RATE_LIMITS.accountRead }, async (req, reply) => {
     const account = await getAccountForUser(req.user!.id);
     if (!account) return reply.code(404).send({ error: "not_onboarded" });
     const status = req.query.status === "closed" || req.query.status === "all" ? req.query.status : "open";
@@ -69,11 +70,8 @@ export async function tradingRoutes(app: FastifyInstance): Promise<void> {
     "/orders",
     {
       preHandler: requireAuth,
-      // Tighter than the global default (index.ts): this one spends real
-      // money. No human places 20 orders a minute, and the idempotency key
-      // below only protects against a repeat of the SAME order, not a flood
-      // of distinct ones.
-      config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
+      // Spends real money — see rateLimits.ts for how every cap is sized.
+      ...RATE_LIMITS.placeOrder,
     },
     async (req, reply) => {
       const account = await getAccountForUser(req.user!.id);

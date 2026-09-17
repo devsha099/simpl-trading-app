@@ -5,6 +5,7 @@ import { getAccountForUser } from "../../db/accounts.js";
 import { getTradeLimits, saveTradeLimits, isLoosening } from "../../db/tradeLimits.js";
 import { countRoundTripsThisWeek } from "../../roundTrips.js";
 import { MAX_ROUND_TRADE_LIMIT, VALID_MARKET_CAPS } from "../../data/tradeLimits.js";
+import { RATE_LIMITS } from "../../rateLimits.js";
 
 const tradeLimitsSchema = z.object({
   roundTradeLimit: z
@@ -31,7 +32,7 @@ const tradeLimitsSchema = z.object({
  * client can't reach.
  */
 export async function tradeLimitsRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/trade-limits", { preHandler: requireAuth }, async (req) => {
+  app.get("/trade-limits", { preHandler: requireAuth, ...RATE_LIMITS.accountRead }, async (req) => {
     const state = await getTradeLimits(req.user!.id);
 
     // Usage is informational — a user who hasn't onboarded has no Alpaca
@@ -49,7 +50,7 @@ export async function tradeLimitsRoutes(app: FastifyInstance): Promise<void> {
     return { ...state, roundTripsThisWeek };
   });
 
-  app.put("/trade-limits", { preHandler: requireAuth }, async (req, reply) => {
+  app.put("/trade-limits", { preHandler: requireAuth, ...RATE_LIMITS.tradeLimitsWrite }, async (req, reply) => {
     const parsed = tradeLimitsSchema.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
